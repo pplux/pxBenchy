@@ -146,6 +146,7 @@ RunResult run_script(Session* s, const RunOptions& ro) {
     script.path = ro.script;
     script.screenshot = ro.screenshot;
     script.screenshot_frame = ro.screenshot_frame;
+    script.time_limit_ns = ro.time_limit * 1000000000LL;
     res.ok = L && vm_run(L, ro.script);
     bind_gpu_finish(&script);
     if (res.ok && !ro.screenshot.empty() && !script.screenshot_taken) {
@@ -162,6 +163,7 @@ RunResult run_script(Session* s, const RunOptions& ro) {
     }
     res.quit = script.quit;
     res.stopped = script.stopped;
+    res.time_limited = script.time_limited;
     s->quit = s->quit || script.quit;
     vm_destroy(L);
     bind_gpu_shutdown(&script);

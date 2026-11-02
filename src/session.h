@@ -15,6 +15,7 @@
 struct RunOptions {
   long long frames = 6000; // 0 = run indefinitely
   long long frames_warmup = 60;
+  long long time_limit = 0; // seconds of measured frames (after warm-up) before the run ends normally, 0 = off
   bool hud = true;
   bool offscreen = false;
   std::string screenshot; // "" = off
@@ -45,8 +46,9 @@ struct Session {
 struct RunResult {
   std::string script;
   bool ok = false;
-  bool quit = false;    // the window was closed / app destroyed during the run (Run all stops)
-  bool stopped = false; // Back during the run (Run all stops)
+  bool quit = false;         // the window was closed / app destroyed during the run (Run all stops)
+  bool stopped = false;      // Back during the run (Run all stops)
+  bool time_limited = false; // ended by RunOptions::time_limit (a normal end, with reports)
   GpuApi api = GpuApi::vk11;
   bool validation = false;
   bool offscreen = false;

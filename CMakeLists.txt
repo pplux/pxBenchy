@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 # the app version (Android versionName; versionCode = major*10000 + minor*100 + patch)
-project(pxbenchy VERSION 0.1.0 LANGUAGES C CXX)
+project(pxbenchy VERSION 0.1.1 LANGUAGES C CXX)
 if(APPLE)
   enable_language(OBJCXX)
 endif()

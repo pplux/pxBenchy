@@ -1185,6 +1185,10 @@ static int l_present(lua_State* L) {
   if (ev & PXB_EV_BACK) { g->stopped = true; }
   if (g->quit) { return luaL_error(L, "quit requested"); }
   if (g->stopped) { return luaL_error(L, "stopped (back)"); }
+  if (g->time_limit_ns && g->presents >= g->frames_warmup && timer_now_ns() - g->measure_start_ns >= g->time_limit_ns) {
+    g->time_limited = true;
+    return vm_stop(L);
+  }
   if (ev & PXB_EV_SURFACE_LOST) {
     g->blit_in = 0; // capture destroyed with the swapchain
     if (!recreate_surface(g)) { return luaL_error(L, "surface recreation failed (or quit)"); }
@@ -1372,6 +1376,7 @@ std::string bind_gpu_report(const GpuLua* g) {
   if (g->sc->offscreen) {
     str_appendf(&o, "offscreen presents: %lld (blits, spanning intervals excluded)\n", g->offscreen_presents);
   }
+  if (g->time_limited) { str_appendf(&o, "time limit: %.0f s reached\n", g->time_limit_ns / 1e9); }
   float end = thermal_latest().headroom;
   str_appendf(&o, "thermal headroom: start %.3f end %.3f (delta %+.3f)\n", g->headroom_start, end,
               end - g->headroom_start);
@@ -1406,6 +1411,9 @@ std::string bind_gpu_report_json(const GpuLua* g, const char* script) {
   } else {
     snprintf(buf, sizeof(buf), ",\"offscreen_presents\":null");
   }
+  o += buf;
+  snprintf(buf, sizeof(buf), ",\"time_limit_s\":%lld,\"time_limited\":%s", (long long)(g->time_limit_ns / 1000000000),
+           g->time_limited ? "true" : "false");
   o += buf;
   snprintf(buf, sizeof(buf), ",\"thermal_headroom_start\":%.6f,\"thermal_headroom_end\":%.6f", g->headroom_start,
            thermal_latest().headroom);

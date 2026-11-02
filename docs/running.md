@@ -3,7 +3,7 @@
 ## Command line
 
 ```
-pxbenchy [--validation] [--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] [--vulkan-info] [<script>]
+pxbenchy [--validation] [--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] [--time-limit S] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] [--vulkan-info] [<script>]
 ```
 
 Without a script the app opens the menu (below); `--vulkan`, `--validation`,
@@ -16,6 +16,7 @@ Without a script the app opens the menu (below); `--vulkan`, `--validation`,
 | `--vulkan auto\|1.1\|1.3` | auto | Vulkan path: 1.1 core (render passes, sync1) or 1.3 (dynamic rendering, synchronization2). `auto` probes the Vulkan driver at startup (temporary instance, no validation) and picks 1.3 when a device has 1.3 + dynamicRendering + synchronization2, else 1.1. An explicit 1.3 on a device without them fails: no fallback, exits 1. The resolved path is shown as `vulkan=` on the startup line (`vulkan=1.3 (auto)` when probed), `vkX.Y` on the HUD, in the `run:` line and as `"vulkan"` in the JSON report |
 | `--frames N` | 6000 | measured frames (`pxb.args.frames`); 0 = run until the window closes |
 | `--frames-warmup N` | 60 | frames before timers are cleared (`pxb.args.frames_warmup`) |
+| `--time-limit S` | 0 (off) | end the run normally (with the report) after S seconds of measured frames (after warm-up); the report says `time limit: S s reached`. Script runs only: the menu has its own setting |
 | `--no-hud` | HUD on | no on-screen stats |
 | `--offscreen` | off | render to an own image, no vsync; about once per second the last frame is copied to the screen |
 | `--json` | off | print the report as one JSON line |
@@ -25,12 +26,15 @@ Without a script the app opens the menu (below); `--vulkan`, `--validation`,
 
 ## Menu
 
-Shown on a launcher start on Android and when `pxbenchy` runs without a script. Sized for touch, scaled by
-the display density.
+Shown on a launcher start on Android and when `pxbenchy` runs without a script. Sized for touch in density-independent
+units (Android dp, macOS points: about the same physical size on every device): 16 dp text, 32 dp buttons. The left
+column (settings + scripts) scrolls with a finger drag; header buttons wrap when the line is too narrow.
 
 - Vulkan 1.1 / 1.3 (initial: as `--vulkan auto`; 1.3 greyed out when the probe finds no 1.3 device) and validation
   on / off (not in Release builds): each change recreates the device (prints a new `device:` line).
 - Offscreen on / off (starts on); frames and warm-up with -/+ buttons over fixed steps (frames 60 .. 12000, warm-up 0 .. 300).
+- Time limit off / 60 s (starts on): "Run all demos" ends each demo normally after 60 s of measured frames (as
+  `--time-limit 60`); a script's own Run button runs without a limit. Cut runs show `(time limit)` in Results.
 - Scripts: every `scripts/*.lua` with its own Run button; "Run all demos" runs every `scripts/demo*.lua`
   in name order with the same options, back to back; Back during a script stops the remaining ones.
 - Results: one row per run (script, vulkan, `val` / `off` options, fps, median gpu busy and cpu frame interval in ms),
@@ -115,7 +119,7 @@ At the end of the run, one row per timer, gpu rows first, then cpu, by name:
 - `run: vulkan V, N frames in T s = F fps, display H Hz (refresh X ms)`: the `--vulkan` path, measured frames (after
   warm-up), their wall time, the resulting fps and the display refresh rate reported by the device (`display -` when
   unknown). Under FIFO, frames lost to vsync can be estimated as `T * H - N`.
-- `offscreen presents` (with `--offscreen`), and the thermal headroom at the start and end of the measured frames
+- `offscreen presents` (with `--offscreen`), `time limit: S s reached` (when `--time-limit` ended the run), and the thermal headroom at the start and end of the measured frames
   (Android: 1.0 = severe throttling; 0 where unsupported).
 
 Tracy also shows thermal plots (headroom, status, battery temperature) sampled once per second.
@@ -124,7 +128,8 @@ Tracy also shows thermal plots (headroom, status, battery temperature) sampled o
 
 `--json` prints the same data as one JSON line: run settings (`script`, `vulkan`,
 `validation`, `present_mode`, `offscreen`, `hud`, `extent`, `frames`, `frames_warmup`, `refresh_ms`), the measured
-`measured_frames`, `measured_time_s`, `fps`, `offscreen_presents`, `thermal_headroom_start` / `_end`, and `timers`.
+`measured_frames`, `measured_time_s`, `fps`, `offscreen_presents`, `time_limit_s` (0 = off) / `time_limited`
+(the limit ended the run), `thermal_headroom_start` / `_end`, and `timers`.
 `device` is the Vulkan device name (kept for compatibility); `device_info` describes the device, driver and build:
 
 | Field | Source |

@@ -58,6 +58,8 @@ struct GpuLua {
   std::string screenshot;               // --screenshot path ("" = off)
   long long screenshot_frame = 1;       // --screenshot-frame: first open frame with presents + 1 >= this is captured
   bool screenshot_taken = false;        // written: gpu.present stopped the script (vm_stop)
+  int64_t time_limit_ns = 0;            // --time-limit: measured wall time that ends the script (0 = off)
+  bool time_limited = false;            // reached: gpu.present stopped the script (vm_stop)
   VkCommandBuffer cmd = VK_NULL_HANDLE;
   uint64_t opens = 0; // successful frame opens so far
   struct Dead {

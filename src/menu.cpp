@@ -31,6 +31,8 @@ constexpr int IDLE_POLL_MS = 16; // event poll period while nothing changes (pla
 constexpr const char* RELEASES_API = "https://api.github.com/repos/pplux/pxBenchy/releases/latest";
 constexpr const char* RELEASES_PAGE = "https://github.com/pplux/pxBenchy/releases/latest";
 
+constexpr long long MENU_TIME_LIMIT = 60; // seconds
+
 struct UpdateCheck {
   std::atomic<bool> done{false};
   std::string tag; // newer release's tag_name, empty when none or the check failed; written before done
@@ -38,6 +40,7 @@ struct UpdateCheck {
 
 struct Menu {
   RunOptions ro;
+  bool time_limit = true;           // "Run all demos" ends each demo after MENU_TIME_LIMIT s of measured frames
   bool vk13 = false;                // gpu_vk13_supported()
   float scale = 1.0f;               // platform_ui_scale()
   PlatformInsets insets;            // platform_safe_insets(), kept clear of the full-screen windows
@@ -184,17 +187,17 @@ static bool ui_frame(Session* s, float scale, const std::function<void()>& build
   ImGuiStyle& st = ImGui::GetStyle();
   ImGuiStyle saved = st;
   st.ScaleAllSizes(1.5f * scale);
-  st.WindowPadding = ImVec2(16.0f * scale, 16.0f * scale);
-  st.FramePadding = ImVec2(14.0f * scale, 12.0f * scale);
-  st.ItemSpacing = ImVec2(12.0f * scale, 10.0f * scale);
-  st.CellPadding = ImVec2(10.0f * scale, 6.0f * scale);
+  st.WindowPadding = ImVec2(10.0f * scale, 10.0f * scale);
+  st.FramePadding = ImVec2(10.0f * scale, 8.0f * scale); // 16 dp font: 32 dp tall buttons
+  st.ItemSpacing = ImVec2(8.0f * scale, 6.0f * scale);
+  st.CellPadding = ImVec2(8.0f * scale, 4.0f * scale);
   st.FrameRounding = 6.0f * scale;
   st.ChildRounding = 6.0f * scale;
   st.ScrollbarSize = 14.0f * scale;
   st.Colors[ImGuiCol_WindowBg] = ImVec4(0.02f, 0.02f, 0.02f, 1.0f);
   st.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.0f);
   bool ok = session_ui_frame(s, [&] {
-    ImGui::PushFont(nullptr, 20.0f * scale);
+    ImGui::PushFont(nullptr, 16.0f * scale);
     build();
     ImGui::PopFont();
   });
@@ -235,6 +238,14 @@ static bool choice(const char* label, bool selected, bool enabled, float width) 
   if (selected) { ImGui::PopStyleColor(); }
   ImGui::EndDisabled();
   return r && !selected;
+}
+
+// SameLine when a button labeled `label` still fits on the current line, else it goes on the next one.
+static void same_line_if_fits(const char* label) {
+  const ImGuiStyle& st = ImGui::GetStyle();
+  float w = ImGui::CalcTextSize(label, nullptr, true).x + 2.0f * st.FramePadding.x;
+  float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + st.ItemSpacing.x + w;
+  if (x <= ImGui::GetContentRegionMax().x) { ImGui::SameLine(); }
 }
 
 static void row_label(const char* label, float x) {
@@ -282,8 +293,12 @@ static void begin_fullscreen(const char* name, const PlatformInsets& in) {
                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
 }
 
+// Settings rows: label column width (longest label) and choice button width.
+static float settings_label_w() { return ImGui::CalcTextSize("Validation").x + 2.0f * ImGui::GetStyle().ItemSpacing.x; }
+static float settings_button_w(const Menu* m) { return 64.0f * m->scale; }
+
 static void build_settings(Menu* m, Session* s) {
-  float k = m->scale, label_w = 150.0f * k, w = 110.0f * k;
+  float label_w = settings_label_w(), w = settings_button_w(m);
   row_label("Vulkan", label_w);
   if (choice("1.1", s->api == GpuApi::vk11, true, w)) {
     m->action = Menu::Action::vulkan;
@@ -314,6 +329,11 @@ static void build_settings(Menu* m, Session* s) {
     if (on) { ImGui::SameLine(); }
     if (choice(on ? "on##off" : "off##off", m->ro.offscreen == on, true, w)) { m->ro.offscreen = on; }
   }
+  row_label("Time limit", label_w);
+  for (bool on : {false, true}) {
+    if (on) { ImGui::SameLine(); }
+    if (choice(on ? "60 s##time" : "off##time", m->time_limit == on, true, w)) { m->time_limit = on; }
+  }
   float sw = 0.5f * w;
   row_label("Frames", label_w);
   stepper("frames", &m->ro.frames, FRAME_STEPS, sw);
@@ -324,11 +344,10 @@ static void build_settings(Menu* m, Session* s) {
 static void build_scripts(Menu* m) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Scripts");
-  ImGui::SameLine();
+  same_line_if_fits("Run all demos");
   ImGui::BeginDisabled(m->demos.empty());
   if (ImGui::Button("Run all demos")) { m->action = Menu::Action::run_all; }
   ImGui::EndDisabled();
-  ImGui::BeginChild("scripts", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
   if (m->scripts.empty()) { ImGui::TextDisabled("no scripts/*.lua found"); }
   for (size_t i = 0; i < m->scripts.size(); i++) {
     ImGui::PushID((int)i);
@@ -341,8 +360,6 @@ static void build_scripts(Menu* m) {
     ImGui::TextUnformatted(path_base_name(m->scripts[i]));
     ImGui::PopID();
   }
-  drag_scroll(m);
-  ImGui::EndChild();
 }
 
 static void ms_cell(double v, bool align) {
@@ -358,15 +375,15 @@ static void ms_cell(double v, bool align) {
 static void build_results(Menu* m) {
   ImGui::AlignTextToFramePadding();
   ImGui::Text("Results (%zu)", m->results.size());
-  ImGui::SameLine();
+  same_line_if_fits("Clear");
   ImGui::BeginDisabled(m->results.empty());
   if (ImGui::Button("Clear")) { m->action = Menu::Action::clear; }
-  ImGui::SameLine();
+  same_line_if_fits("Save results");
   if (ImGui::Button("Save results")) { m->action = Menu::Action::save; }
   static const std::pair<const char*, Menu::Action> share_buttons[] = {
       {"Share", Menu::Action::share}, {"Share as text", Menu::Action::share_text}, {"Copy", Menu::Action::copy}};
   for (const auto& b : share_buttons) {
-    ImGui::SameLine();
+    same_line_if_fits(b.first);
     if (ImGui::Button(b.first)) { m->action = b.second; }
   }
   ImGui::EndDisabled();
@@ -387,7 +404,7 @@ static void build_results(Menu* m) {
       ImGui::PushID((int)i);
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
-      const char* state = r.ok ? "" : r.stopped ? " (stopped)" : " (failed)";
+      const char* state = !r.ok ? (r.stopped ? " (stopped)" : " (failed)") : r.time_limited ? " (time limit)" : "";
       bool open = ImGui::TreeNodeEx("run", ImGuiTreeNodeFlags_SpanAllColumns | ImGuiTreeNodeFlags_FramePadding, "%s%s",
                                     path_base_name(r.script), state);
       ImGui::TableNextColumn();
@@ -456,11 +473,15 @@ static void build_menu(Menu* m, Session* s) {
     ImGui::SameLine();
     if (ImGui::Button("Download")) { m->action = Menu::Action::update; }
   }
-  float left_w = std::floor(ImGui::GetContentRegionAvail().x * 0.32f);
+  // left: settings + scripts, one scroll; at least as wide as a settings row (label + 2 buttons + scrollbar)
+  const ImGuiStyle& st = ImGui::GetStyle();
+  float row_w = settings_label_w() + 2.0f * settings_button_w(m) + st.ItemSpacing.x + st.ScrollbarSize;
+  float left_w = std::floor(std::max(ImGui::GetContentRegionAvail().x * 0.32f, row_w));
   ImGui::BeginChild("left", ImVec2(left_w, 0.0f));
   build_settings(m, s);
-  ImGui::Spacing();
+  ImGui::Separator();
   build_scripts(m);
+  drag_scroll(m);
   ImGui::EndChild();
   ImGui::SameLine();
   ImGui::BeginChild("right", ImVec2(0.0f, 0.0f));
@@ -479,9 +500,10 @@ static std::vector<std::string> suite_scripts() {
 }
 
 // Runs script with the menu's options: prints the report, sets the status and adds the run to the results table.
-static RunResult run_one(Menu* m, Session* s, const std::string& script) {
+static RunResult run_one(Menu* m, Session* s, const std::string& script, long long time_limit) {
   RunOptions ro = m->ro;
   ro.script = script;
+  ro.time_limit = time_limit;
   RunResult r = run_script(s, ro);
   print_result(r);
   set_status(m, r);
@@ -508,13 +530,13 @@ static void run_action(Menu* m, Session* s) {
       m->device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
       break;
     }
-    case Menu::Action::run: run_one(m, s, m->scripts[m->run_index]); break;
+    case Menu::Action::run: run_one(m, s, m->scripts[m->run_index], 0); break;
     case Menu::Action::run_all: {
       size_t runs = 0;
       while (runs < m->demos.size()) {
         printf("menu: run all %zu/%zu %s\n", runs + 1, m->demos.size(), m->demos[runs].c_str());
         fflush(stdout);
-        RunResult r = run_one(m, s, m->demos[runs++]);
+        RunResult r = run_one(m, s, m->demos[runs++], m->time_limit ? MENU_TIME_LIMIT : 0);
         if (r.quit || r.stopped) { break; }
       }
       if (runs < m->demos.size() && !s->quit) { m->status += "  (run all stopped after " + std::to_string(runs) + ")"; }

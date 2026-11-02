@@ -27,7 +27,7 @@ struct Options {
 
 static void usage() {
   fprintf(stderr, "usage: pxbenchy " VALIDATION_USAGE "[--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] "
-                  "[--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] "
+                  "[--time-limit S] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] "
                   "[--vulkan-info] [<script>]\n"
                   "  no script: menu (the options set its initial state)\n");
 }
@@ -74,6 +74,8 @@ static bool parse_args(const std::vector<std::string>& args, Options* opt) {
       if (!parse_count(a, i + 1 < args.size() ? args[++i] : "", &opt->run.frames)) { return false; }
     } else if (a == "--frames-warmup") {
       if (!parse_count(a, i + 1 < args.size() ? args[++i] : "", &opt->run.frames_warmup)) { return false; }
+    } else if (a == "--time-limit") {
+      if (!parse_count(a, i + 1 < args.size() ? args[++i] : "", &opt->run.time_limit)) { return false; }
     } else if (a == "--no-hud") {
       opt->run.hud = false;
     } else if (a == "--offscreen") {
@@ -130,9 +132,10 @@ int app_main(const std::vector<std::string>& args) {
   if (opt.vulkan_auto) { opt.vulkan = gpu_vk13_supported() ? GpuApi::vk13 : GpuApi::vk11; }
   const RunOptions& ro = opt.run;
   std::string script = opt.menu ? "(menu)" : ro.script;
-  printf("git=%s validation=%d vulkan=%s%s frames=%lld frames_warmup=%lld hud=%d offscreen=%d json=%d script=%s\n",
+  printf("git=%s validation=%d vulkan=%s%s frames=%lld frames_warmup=%lld time_limit=%lld hud=%d offscreen=%d json=%d "
+         "script=%s\n",
          PXB_GIT_HASH, opt.validation ? 1 : 0, gpu_api_name(opt.vulkan), opt.vulkan_auto ? " (auto)" : "", ro.frames,
-         ro.frames_warmup, ro.hud ? 1 : 0, ro.offscreen ? 1 : 0, opt.json ? 1 : 0, script.c_str());
+         ro.frames_warmup, ro.time_limit, ro.hud ? 1 : 0, ro.offscreen ? 1 : 0, opt.json ? 1 : 0, script.c_str());
   fflush(stdout);
 
   Session s;
