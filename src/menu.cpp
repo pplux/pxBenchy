@@ -1,8 +1,11 @@
 #include "menu.h"
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <thread>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -23,6 +26,16 @@ static const long long WARMUP_STEPS[] = {0, 10, 30, 60, 120, 300};
 constexpr int REDRAW_FRAMES = 3;
 constexpr int IDLE_POLL_MS = 16; // event poll period while nothing changes (platform_pump does not block)
 
+// Update check (Android): the latest GitHub release's tag_name against PXB_VERSION, on a thread at menu start. A newer
+// one shows a Download button that opens the latest release page in the browser.
+constexpr const char* RELEASES_API = "https://api.github.com/repos/pplux/pxBenchy/releases/latest";
+constexpr const char* RELEASES_PAGE = "https://github.com/pplux/pxBenchy/releases/latest";
+
+struct UpdateCheck {
+  std::atomic<bool> done{false};
+  std::string tag; // newer release's tag_name, empty when none or the check failed; written before done
+};
+
 struct Menu {
   RunOptions ro;
   bool vk13 = false;                // gpu_vk13_supported()
@@ -38,12 +51,55 @@ struct Menu {
   bool dragging = false;
   float drag_scroll0 = 0.0f;
   // set while building a frame, done after it (device idle, no ImGui frame open)
-  enum class Action { none, vulkan, validation, run, run_all, clear, save, share, share_text, copy };
+  enum class Action { none, vulkan, validation, run, run_all, clear, save, share, share_text, copy, update };
   Action action = Action::none;
   GpuApi want_api = GpuApi::vk11;
   bool want_validation = false;
   size_t run_index = 0;
+  std::shared_ptr<UpdateCheck> update; // shared with the check thread (detached: may outlive the menu)
+  bool update_seen = false;            // update->done observed, update_tag set
+  std::string update_tag;
 };
+
+// Value of the first `"key": "string"` in json, empty if missing (no escapes: tags have none).
+static std::string json_field(const std::string& json, const char* key) {
+  std::string k = std::string("\"") + key + "\"";
+  size_t p = json.find(k);
+  p = p == std::string::npos ? p : json.find_first_not_of(" \t\r\n", p + k.size());
+  if (p == std::string::npos || json[p] != ':') { return ""; }
+  p = json.find_first_not_of(" \t\r\n", p + 1);
+  if (p == std::string::npos || json[p] != '"') { return ""; }
+  size_t e = json.find('"', p + 1);
+  return e == std::string::npos ? "" : json.substr(p + 1, e - p - 1);
+}
+
+// "1.2.3" or "v1.2.3" -> {1, 2, 3}. False on any other shape.
+static bool parse_version(const std::string& s, std::array<int, 3>* v) {
+  const char* c = s.c_str() + (!s.empty() && s[0] == 'v' ? 1 : 0);
+  int n = 0;
+  return sscanf(c, "%d.%d.%d%n", &(*v)[0], &(*v)[1], &(*v)[2], &n) == 3 && c[n] == '\0';
+}
+
+// Check thread body: sets u->tag when the latest release is newer than this build, then u->done.
+static void update_check(UpdateCheck* u) {
+  std::string body, err;
+  std::array<int, 3> cur{}, latest{};
+  if (!platform_http_get(RELEASES_API, &body, &err)) {
+    printf("update: check failed: %s\n", err.c_str());
+  } else {
+    std::string tag = json_field(body, "tag_name");
+    if (!parse_version(PXB_VERSION, &cur) || !parse_version(tag, &latest)) {
+      printf("update: cannot compare release '%s' with %s\n", tag.c_str(), PXB_VERSION);
+    } else if (cur < latest) {
+      printf("update: %s available (running %s)\n", tag.c_str(), PXB_VERSION);
+      u->tag = tag;
+    } else {
+      printf("update: up to date (%s, latest release %s)\n", PXB_VERSION, tag.c_str());
+    }
+  }
+  fflush(stdout);
+  u->done.store(true);
+}
 
 static void set_status(Menu* m, const RunResult& r) {
   char buf[256];
@@ -394,6 +450,12 @@ static void build_menu(Menu* m, Session* s) {
   } else {
     ImGui::TextDisabled("Back / Esc: exit. During a run: stop it.");
   }
+  if (!m->update_tag.empty()) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("pxBenchy %s available", m->update_tag.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Download")) { m->action = Menu::Action::update; }
+  }
   float left_w = std::floor(ImGui::GetContentRegionAvail().x * 0.32f);
   ImGui::BeginChild("left", ImVec2(left_w, 0.0f));
   build_settings(m, s);
@@ -466,6 +528,11 @@ static void run_action(Menu* m, Session* s) {
     case Menu::Action::share:
     case Menu::Action::share_text:
     case Menu::Action::copy: share(m, s, m->action); break;
+    case Menu::Action::update: {
+      std::string msg;
+      m->status = platform_open_url(RELEASES_PAGE, &msg) ? "Download: " + msg : "Download failed: " + msg;
+      break;
+    }
   }
   m->action = Menu::Action::none;
 }
@@ -480,10 +547,19 @@ int menu_run(Session* s, const RunOptions& ro) {
   m.scripts = platform_list_scripts();
   m.demos = suite_scripts();
   m.device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
+  m.update = std::make_shared<UpdateCheck>();
+#if defined(__ANDROID__) // desktop builds come from source: no check
+  std::thread([u = m.update] { update_check(u.get()); }).detach();
+#endif
   int redraw = REDRAW_FRAMES;
   while (!s->quit) {
     uint32_t ev = session_pump(s);
     if (ev & (PXB_EV_QUIT | PXB_EV_BACK)) { break; }
+    if (!m.update_seen && m.update->done.load()) {
+      m.update_seen = true;
+      m.update_tag = m.update->tag;
+      redraw = REDRAW_FRAMES;
+    }
     if (ev & (PXB_EV_RESIZED | PXB_EV_SURFACE_LOST)) {
       redraw = REDRAW_FRAMES;
       m.scale = platform_ui_scale(); // moved to another display / density change

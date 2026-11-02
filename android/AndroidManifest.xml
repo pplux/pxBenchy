@@ -7,7 +7,7 @@
   <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="34" />
   <!-- Vulkan 1.1 minimum (vk11 backend). The vk13 backend (dynamic rendering, sync2) is picked at runtime when supported -->
   <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
-  <!-- Tracy profiler listens on a socket (dropped when PXB_TRACY is off, see build_apk.sh) -->
+  <!-- update check (GitHub releases) and the Tracy profiler's socket -->
   <uses-permission android:name="android.permission.INTERNET" />
 
   <application
