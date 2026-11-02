@@ -45,7 +45,7 @@ bool screenshot_write(GpuDevice* dev, const GpuSwapchain* sc, GpuScreenshot* sho
 }
 
 void screenshot_destroy(GpuDevice* dev, GpuScreenshot* shot) {
-  if (shot->buf) vmaDestroyBuffer(dev->vma, shot->buf, shot->alloc);
+  if (shot->buf) { vmaDestroyBuffer(dev->vma, shot->buf, shot->alloc); }
   *shot = GpuScreenshot{};
 }
 

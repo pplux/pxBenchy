@@ -4,7 +4,7 @@
 namespace vk13 {
 
 bool screenshot_record(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer cmd, GpuScreenshot* shot) {
-  if (!vkc::part::screenshot_alloc(dev, sc, shot)) return false;
+  if (!vkc::part::screenshot_alloc(dev, sc, shot)) { return false; }
 
   const vkc::State src = {vkc::COPY_SRC};
   VkImage image;

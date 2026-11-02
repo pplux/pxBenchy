@@ -28,7 +28,7 @@ bool create_raw_buffer(GpuDevice* dev, VkDeviceSize size, VkBufferUsageFlags usa
     return false;
   }
   TracyAllocN(*alloc, info.size, "vk_resources");
-  if (mapped) *mapped = info.pMappedData;
+  if (mapped) { *mapped = info.pMappedData; }
   return true;
 }
 
@@ -47,11 +47,11 @@ bool buffer_create(GpuDevice* dev, const GpuBufferDesc& desc, GpuBuffer* out) {
     return false;
   }
   VkBufferUsageFlags usage = 0;
-  if (desc.usage & GPU_BUF_VERTEX) usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-  if (desc.usage & GPU_BUF_INDEX) usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-  if (desc.usage & GPU_BUF_UNIFORM) usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-  if (desc.usage & GPU_BUF_STORAGE) usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-  if (desc.usage & GPU_BUF_INDIRECT) usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+  if (desc.usage & GPU_BUF_VERTEX) { usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; }
+  if (desc.usage & GPU_BUF_INDEX) { usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT; }
+  if (desc.usage & GPU_BUF_UNIFORM) { usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT; }
+  if (desc.usage & GPU_BUF_STORAGE) { usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; }
+  if (desc.usage & GPU_BUF_INDIRECT) { usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; }
 
   GpuBuffer b;
   b.size = desc.size;
@@ -63,14 +63,15 @@ bool buffer_create(GpuDevice* dev, const GpuBufferDesc& desc, GpuBuffer* out) {
   } else {
     ok = create_raw_buffer(dev, desc.size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, false, &b.h, &b.alloc, nullptr);
   }
-  if (!ok) return false;
+  if (!ok) { return false; }
   *out = b;
   return true;
 }
 
 void buffer_destroy(GpuDevice* dev, GpuBuffer* buf) {
-  for (uint32_t i = 0; i < PXB_FRAMES_IN_FLIGHT; i++)
+  for (uint32_t i = 0; i < PXB_FRAMES_IN_FLIGHT; i++) {
     destroy_raw_buffer(dev, &buf->staging[i], &buf->staging_alloc[i]);
+  }
   destroy_raw_buffer(dev, &buf->h, &buf->alloc);
   *buf = GpuBuffer{};
 }
@@ -81,10 +82,11 @@ bool buffer_open(GpuDevice* dev, GpuBuffer* buf, uint32_t slot) {
     return false;
   }
   if (buf->mode == GpuBufferMode::staged) {
-    if (!buf->staging[slot] && !create_raw_buffer(dev, buf->size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true,
-                                                  &buf->staging[slot], &buf->staging_alloc[slot],
-                                                  &buf->staging_map[slot]))
+    if (!buf->staging[slot] &&
+        !create_raw_buffer(dev, buf->size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, &buf->staging[slot],
+                           &buf->staging_alloc[slot], &buf->staging_map[slot])) {
       return false;
+    }
     buf->slot = slot;
   }
   buf->is_open = true;
@@ -103,30 +105,29 @@ bool buffer_write(GpuBuffer* buf, VkDeviceSize offset, const void* data, VkDevic
             (unsigned long long)offset, (unsigned long long)size, (unsigned long long)buf->size);
     return false;
   }
-  if (size == 0) return true;
+  if (size == 0) { return true; }
   void* dst = buf->mode == GpuBufferMode::staged ? buf->staging_map[buf->slot] : buf->mapped;
   memcpy((char*)dst + offset, data, size);
-  if (offset < buf->lo) buf->lo = offset;
-  if (offset + size > buf->hi) buf->hi = offset + size;
+  if (offset < buf->lo) { buf->lo = offset; }
+  if (offset + size > buf->hi) { buf->hi = offset + size; }
   return true;
 }
 
 uint32_t buffer_read_uses(uint32_t usage) {
   uint32_t uses = 0;
-  if (usage & GPU_BUF_VERTEX) uses |= VERTEX_BUFFER;
-  if (usage & GPU_BUF_INDEX) uses |= INDEX_BUFFER;
-  if (usage & GPU_BUF_UNIFORM) uses |= UNIFORM_GRAPHICS;
-  if (usage & GPU_BUF_STORAGE) uses |= STORAGE_READ_GRAPHICS;
-  if (usage & GPU_BUF_INDIRECT) uses |= INDIRECT_BUFFER;
+  if (usage & GPU_BUF_VERTEX) { uses |= VERTEX_BUFFER; }
+  if (usage & GPU_BUF_INDEX) { uses |= INDEX_BUFFER; }
+  if (usage & GPU_BUF_UNIFORM) { uses |= UNIFORM_GRAPHICS; }
+  if (usage & GPU_BUF_STORAGE) { uses |= STORAGE_READ_GRAPHICS; }
+  if (usage & GPU_BUF_INDIRECT) { uses |= INDIRECT_BUFFER; }
   return uses;
 }
 
 bool texture_create(GpuDevice* dev, const GpuTextureDesc& desc, GpuTexture* out) {
   bool color = desc.kind == GpuTextureKind::color;
   uint32_t full = 1;
-  for (uint32_t m = desc.width > desc.height ? desc.width : desc.height; m > 1; m >>= 1) full++;
-  if (desc.mip_levels < 1 || desc.mip_levels > full || desc.mip_levels > PXB_MAX_MIPS ||
-      (desc.storage && !color)) {
+  for (uint32_t m = desc.width > desc.height ? desc.width : desc.height; m > 1; m >>= 1) { full++; }
+  if (desc.mip_levels < 1 || desc.mip_levels > full || desc.mip_levels > PXB_MAX_MIPS || (desc.storage && !color)) {
     fprintf(stderr, "error: invalid texture mip_levels=%u (max %u) storage=%d\n", desc.mip_levels, full,
             (int)desc.storage);
     return false;
@@ -139,10 +140,11 @@ bool texture_create(GpuDevice* dev, const GpuTextureDesc& desc, GpuTexture* out)
   t.storage = desc.storage;
 
   VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  if (color)
+  if (color) {
     usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
             VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  if (desc.storage) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  }
+  if (desc.storage) { usage |= VK_IMAGE_USAGE_STORAGE_BIT; }
   VkImageCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
       .imageType = VK_IMAGE_TYPE_2D,
@@ -187,9 +189,10 @@ bool texture_create(GpuDevice* dev, const GpuTextureDesc& desc, GpuTexture* out)
 }
 
 void texture_destroy(GpuDevice* dev, GpuTexture* tex) {
-  if (tex->view) vkDestroyImageView(dev->device, tex->view, nullptr);
-  for (VkImageView v : tex->mip_views)
-    if (v) vkDestroyImageView(dev->device, v, nullptr);
+  if (tex->view) { vkDestroyImageView(dev->device, tex->view, nullptr); }
+  for (VkImageView v : tex->mip_views) {
+    if (v) { vkDestroyImageView(dev->device, v, nullptr); }
+  }
   if (tex->image) {
     TracyFreeN(tex->alloc, "vk_resources");
     vmaDestroyImage(dev->vma, tex->image, tex->alloc);

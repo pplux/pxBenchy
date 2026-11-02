@@ -43,11 +43,41 @@ namespace vkc::part {
 bool compute_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget target, GpuPipeline* out,
                       std::string* error);
 
-// Graphics pipeline from desc.vs/fs, compiled for target, except the render-target hookup: p_next is chained into
-// VkGraphicsPipelineCreateInfo and render_pass is its renderPass (subpass 0). Dynamic viewport/scissor, no MSAA, at
-// most one descriptor set (set 0, from desc.bindings). Binding names must be unique GLSL identifiers.
-// On failure returns false with *error set (shader errors verbatim from shader_compile); nothing is leaked.
-bool graphics_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget target, const void* p_next,
-                       VkRenderPass render_pass, GpuPipeline* out, std::string* error);
+// Everything a graphics pipeline needs except the render-target hookup. `info` points into the struct, so it is not
+// copyable.
+struct GraphicsPipelineBuild {
+  VkShaderModule vs_mod = VK_NULL_HANDLE, fs_mod = VK_NULL_HANDLE;
+  VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  std::vector<VkVertexInputBindingDescription> bindings;
+  std::vector<VkVertexInputAttributeDescription> attrs;
+  VkPipelineVertexInputStateCreateInfo vi = {};
+  VkPipelineInputAssemblyStateCreateInfo ia = {};
+  VkPipelineViewportStateCreateInfo vp = {};
+  VkPipelineRasterizationStateCreateInfo rs = {};
+  VkPipelineMultisampleStateCreateInfo ms = {};
+  VkPipelineDepthStencilStateCreateInfo ds = {};
+  VkPipelineColorBlendAttachmentState cba = {};
+  VkPipelineColorBlendStateCreateInfo cb = {};
+  VkDynamicState dyn[2] = {};
+  VkPipelineDynamicStateCreateInfo dy = {};
+  VkPipelineShaderStageCreateInfo stages[2] = {};
+  VkGraphicsPipelineCreateInfo info = {}; // pNext and renderPass left null for the mode
+  GraphicsPipelineBuild() = default;
+  GraphicsPipelineBuild(const GraphicsPipelineBuild&) = delete;
+  GraphicsPipelineBuild& operator=(const GraphicsPipelineBuild&) = delete;
+};
+
+// Validates desc.vs/fs, compiles them for target and fills *b: modules, layouts and b->info (dynamic viewport/scissor,
+// no MSAA, at most one descriptor set: set 0, from desc.bindings). Binding names must be unique GLSL identifiers. The
+// mode then adds its render-target hookup to b->info, calls vkCreateGraphicsPipelines and must call
+// graphics_pipeline_end. On failure returns false with *error set (shader errors verbatim from shader_compile);
+// nothing is leaked and graphics_pipeline_end must not be called.
+bool graphics_pipeline_begin(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget target, GraphicsPipelineBuild* b,
+                             std::string* error);
+// Takes the vkCreateGraphicsPipelines result: frees the shader modules; on success fills *out, otherwise frees the
+// layouts and returns false with *error set.
+bool graphics_pipeline_end(GpuDevice* dev, const GpuPipelineDesc& desc, GraphicsPipelineBuild* b, VkResult r,
+                           VkPipeline pipeline, GpuPipeline* out, std::string* error);
 
 } // namespace vkc::part

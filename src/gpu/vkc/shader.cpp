@@ -25,11 +25,11 @@ static std::string source_line(const char* src, int n) {
   const char* p = src;
   for (int i = 1; i < n; i++) {
     p = strchr(p, '\n');
-    if (!p) return std::string();
+    if (!p) { return std::string(); }
     p++;
   }
   const char* e = p;
-  while (*e && *e != '\n' && *e != '\r') e++;
+  while (*e && *e != '\n' && *e != '\r') { e++; }
   return std::string(p, e);
 }
 
@@ -40,17 +40,20 @@ static void format_log(const char* log, const char* src, const char* name, std::
     const char* e = strchr(p, '\n');
     std::string line = e ? std::string(p, e) : std::string(p);
     p = e ? e + 1 : p + line.size();
-    if (line.empty()) continue;
+    if (line.empty()) { continue; }
     const char* l = line.c_str();
     const char* rest = nullptr;
-    if (strncmp(l, "ERROR: 0:", 9) == 0) rest = l + 9;
-    else if (strncmp(l, "WARNING: 0:", 11) == 0) rest = l + 11;
+    if (strncmp(l, "ERROR: 0:", 9) == 0) {
+      rest = l + 9;
+    } else if (strncmp(l, "WARNING: 0:", 11) == 0) {
+      rest = l + 11;
+    }
     char* end = nullptr;
     long n = rest ? strtol(rest, &end, 10) : 0;
     if (rest && end != rest && *end == ':') {
       *out += std::string(name) + ":" + std::to_string(n) + ":" + (end + 1) + "\n";
       std::string s = source_line(src, (int)n);
-      if (!s.empty()) *out += "    " + s + "\n";
+      if (!s.empty()) { *out += "    " + s + "\n"; }
     } else if (strncmp(l, "ERROR: ", 7) == 0 && strstr(l, "compilation errors.")) {
       continue;
     } else {
@@ -64,7 +67,7 @@ bool shader_compile(ShaderTarget target, GpuShaderStage stage, const char* sourc
   EShLanguage lang = to_lang(stage);
   glslang::TShader shader(lang);
   shader.setStrings(&source, 1);
-  if (preamble && *preamble) shader.setPreamble(preamble);
+  if (preamble && *preamble) { shader.setPreamble(preamble); }
   shader.setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 100);
   shader.setEnvClient(glslang::EShClientVulkan, (glslang::EShTargetClientVersion)target.vulkan);
   shader.setEnvTarget(glslang::EShTargetSpv, (glslang::EShTargetLanguageVersion)target.spirv);

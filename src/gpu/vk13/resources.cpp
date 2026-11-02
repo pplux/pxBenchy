@@ -10,7 +10,7 @@ bool buffer_close(GpuBuffer* buf, VkCommandBuffer cmd) {
     return false;
   }
   buf->is_open = false;
-  if (buf->mode == GpuBufferMode::mapped || buf->hi <= buf->lo) return true;
+  if (buf->mode == GpuBufferMode::mapped || buf->hi <= buf->lo) { return true; }
   ensure_state(cmd, buf, {vkc::COPY_DST});
   VkBufferCopy region = {.srcOffset = buf->lo, .dstOffset = buf->lo, .size = buf->hi - buf->lo};
   vkCmdCopyBuffer(cmd, buf->staging[buf->slot], buf->h, 1, &region);
@@ -35,8 +35,9 @@ bool texture_upload(GpuDevice* dev, GpuTexture* tex, uint32_t mip, const void* d
   GpuBuffer st;
   st.size = size;
   st.mode = GpuBufferMode::mapped;
-  if (!vkc::create_raw_buffer(dev, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, &st.h, &st.alloc, &st.mapped))
+  if (!vkc::create_raw_buffer(dev, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, &st.h, &st.alloc, &st.mapped)) {
     return false;
+  }
   memcpy(st.mapped, data, size);
   ensure_state(cmd, tex, mip, 1, {vkc::COPY_DST});
   VkBufferImageCopy region = {

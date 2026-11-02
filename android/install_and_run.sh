@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the APK, install it, launch it and follow logcat until the app exits (exit code = the app's; Ctrl+C stops).
-# Usage: android/install_and_run.sh [app args...]
+# Usage: android/install_and_run.sh [--release | --release-tracy] [app args...]
 #   e.g. android/install_and_run.sh --validation scripts/demo1_instancing.lua
+#   --release / --release-tracy install that variant (see build_apk.sh)
 # App args are passed as the intent extra "args". Device: ANDROID_SERIAL if several.
 set -euo pipefail
 
@@ -19,14 +20,27 @@ if [[ -z "${ANDROID_SERIAL:-}" ]]; then
   fi
 fi
 
-APK="$("$ROOT/android/build_apk.sh" | tail -n1)"
+BUILD_ARGS=()
+if [[ "${1:-}" == "--release" || "${1:-}" == "--release-tracy" ]]; then
+  BUILD_ARGS=("$1")
+  shift
+fi
 
+APK="$("$ROOT/android/build_apk.sh" ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} | tail -n1)"
+
+# an installed app signed with another key (e.g. another machine's debug keystore) blocks the update: uninstall it
+# (drops its data) and install again
 if ! out="$(adb install -r "$APK" 2>&1)"; then
-  echo "$out" >&2
-  if grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE <<<"$out"; then
-    die "installed app is signed with a different key. Run: adb uninstall $PKG"
+  if ! grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE <<<"$out"; then
+    echo "$out" >&2
+    die "adb install failed"
   fi
-  die "adb install failed"
+  echo "installed $PKG is signed with a different key, uninstalling it" >&2
+  adb uninstall "$PKG" >&2 || die "adb uninstall $PKG failed"
+  if ! out="$(adb install "$APK" 2>&1)"; then
+    echo "$out" >&2
+    die "adb install failed"
+  fi
 fi
 
 adb logcat -c

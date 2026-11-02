@@ -12,8 +12,9 @@ bool pass_begin(GpuDevice* dev, GpuSwapchain* sc, GpuPassCtx* ctx, VkCommandBuff
                      ctx->depth.extent.height != sc->extent.height)) {
     texture_destroy(dev, &ctx->depth);
     if (!texture_create(dev, {sc->extent.width, sc->extent.height, GPU_PASS_DEPTH_FORMAT, GpuTextureKind::depth},
-                        &ctx->depth))
+                        &ctx->depth)) {
       return false;
+    }
   }
   bool offscreen = sc->offscreen && !desc.swapchain;
   if (!offscreen && !sc->acquired) {
@@ -23,7 +24,9 @@ bool pass_begin(GpuDevice* dev, GpuSwapchain* sc, GpuPassCtx* ctx, VkCommandBuff
   VkImage image = offscreen ? sc->offscreen_tex.image : sc->images[sc->image];
   vkc::State* state = offscreen ? &sc->offscreen_tex.state[0] : &sc->image_states[sc->image];
   uint32_t color_uses = vkc::COLOR_ATTACH_WRITE;
-  if (!desc.clear) color_uses |= vkc::COLOR_ATTACH_READ; // LOAD reads the image
+  if (!desc.clear) {
+    color_uses |= vkc::COLOR_ATTACH_READ; // LOAD reads the image
+  }
   ensure_state(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, state, {color_uses});
 
   VkRenderingAttachmentInfo color = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};

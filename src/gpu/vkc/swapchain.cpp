@@ -54,23 +54,24 @@ static bool create_frame(GpuDevice* dev, GpuFrame& f) {
 }
 
 static bool create_frames(GpuDevice* dev, GpuSwapchain* sc) {
-  for (GpuFrame& f : sc->frames)
-    if (!create_frame(dev, f)) return false;
+  for (GpuFrame& f : sc->frames) {
+    if (!create_frame(dev, f)) { return false; }
+  }
   return !sc->offscreen || create_frame(dev, sc->blit);
 }
 
 static void destroy_frame(GpuDevice* dev, GpuFrame& f) {
-  if (f.image_acquired) vkDestroySemaphore(dev->device, f.image_acquired, nullptr);
-  if (f.fence) vkDestroyFence(dev->device, f.fence, nullptr);
-  if (f.pool) vkDestroyCommandPool(dev->device, f.pool, nullptr);
+  if (f.image_acquired) { vkDestroySemaphore(dev->device, f.image_acquired, nullptr); }
+  if (f.fence) { vkDestroyFence(dev->device, f.fence, nullptr); }
+  if (f.pool) { vkDestroyCommandPool(dev->device, f.pool, nullptr); }
   f = GpuFrame{};
 }
 
 static void destroy_images(GpuDevice* dev, GpuSwapchain* sc) {
   texture_destroy(dev, &sc->offscreen_tex);
   texture_destroy(dev, &sc->capture);
-  for (VkImageView v : sc->views) vkDestroyImageView(dev->device, v, nullptr);
-  for (VkSemaphore s : sc->render_finished) vkDestroySemaphore(dev->device, s, nullptr);
+  for (VkImageView v : sc->views) { vkDestroyImageView(dev->device, v, nullptr); }
+  for (VkSemaphore s : sc->render_finished) { vkDestroySemaphore(dev->device, s, nullptr); }
   sc->views.clear();
   sc->image_states.clear();
   sc->render_finished.clear();
@@ -78,7 +79,7 @@ static void destroy_images(GpuDevice* dev, GpuSwapchain* sc) {
 }
 
 bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
-  if (!sc->frames[0].pool && !create_frames(dev, sc)) return false;
+  if (!sc->frames[0].pool && !create_frames(dev, sc)) { return false; }
   sc->needs_recreate = false;
 
   VkSurfaceCapabilitiesKHR caps;
@@ -105,14 +106,15 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
     return false;
   }
   VkExtent2D view_extent = extent;
-  if (dev->transform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR))
+  if (dev->transform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)) {
     extent = {view_extent.height, view_extent.width};
+  }
 
   VkSwapchainKHR old = sc->swapchain;
   if (extent.width == 0 || extent.height == 0) {
     // minimized: drop the swapchain and retry on a later iteration
     destroy_images(dev, sc);
-    if (old) vkDestroySwapchainKHR(dev->device, old, nullptr);
+    if (old) { vkDestroySwapchainKHR(dev->device, old, nullptr); }
     sc->swapchain = VK_NULL_HANDLE;
     sc->needs_recreate = true;
     return true;
@@ -140,11 +142,12 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
   vkGetPhysicalDeviceSurfacePresentModesKHR(dev->physical, dev->surface, &count, modes.data());
   // no MAILBOX: it discards rendered frames, FIFO keeps every frame (vsync-capped)
   VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR; // always supported
-  if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_IMMEDIATE_KHR) != modes.end())
+  if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_IMMEDIATE_KHR) != modes.end()) {
     mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+  }
 
   uint32_t image_count = std::max(caps.minImageCount + 1, 3u);
-  if (caps.maxImageCount) image_count = std::min(image_count, caps.maxImageCount);
+  if (caps.maxImageCount) { image_count = std::min(image_count, caps.maxImageCount); }
 
   VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   if (!(caps.supportedCompositeAlpha & alpha)) {
@@ -187,7 +190,7 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
   ci.oldSwapchain = old;
   r = vkCreateSwapchainKHR(dev->device, &ci, nullptr, &sc->swapchain);
   destroy_images(dev, sc);
-  if (old) vkDestroySwapchainKHR(dev->device, old, nullptr);
+  if (old) { vkDestroySwapchainKHR(dev->device, old, nullptr); }
   if (r != VK_SUCCESS) {
     sc->swapchain = VK_NULL_HANDLE;
     fprintf(stderr, "error: vkCreateSwapchainKHR failed (%d)\n", (int)r);
@@ -200,7 +203,9 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
   sc->refresh_ns = 0;
   if (dev->display_timing) {
     VkRefreshCycleDurationGOOGLE rc = {};
-    if (vkGetRefreshCycleDurationGOOGLE(dev->device, sc->swapchain, &rc) == VK_SUCCESS) sc->refresh_ns = rc.refreshDuration;
+    if (vkGetRefreshCycleDurationGOOGLE(dev->device, sc->swapchain, &rc) == VK_SUCCESS) {
+      sc->refresh_ns = rc.refreshDuration;
+    }
   }
 
   vkGetSwapchainImagesKHR(dev->device, sc->swapchain, &count, nullptr);
@@ -232,17 +237,19 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
 
   if (sc->offscreen &&
       (!texture_create(dev, {extent.width, extent.height, format.format, GpuTextureKind::color}, &sc->offscreen_tex) ||
-       !texture_create(dev, {extent.width, extent.height, format.format, GpuTextureKind::color}, &sc->capture)))
+       !texture_create(dev, {extent.width, extent.height, format.format, GpuTextureKind::color}, &sc->capture))) {
     return false;
+  }
 
   if (!sc->printed) {
     printf("swapchain: present_mode=%s format=%d colorspace=%d images=%u extent=%ux%u refresh=%.3fms offscreen=%d "
            "transform=0x%x view=%ux%u\n",
-           present_mode_name(mode), (int)format.format, (int)format.colorSpace, count, extent.width,
-           extent.height, sc->refresh_ns / 1e6, sc->offscreen ? 1 : 0, (unsigned)dev->transform, view_extent.width,
+           present_mode_name(mode), (int)format.format, (int)format.colorSpace, count, extent.width, extent.height,
+           sc->refresh_ns / 1e6, sc->offscreen ? 1 : 0, (unsigned)dev->transform, view_extent.width,
            view_extent.height);
-    if (mode != VK_PRESENT_MODE_IMMEDIATE_KHR)
+    if (mode != VK_PRESENT_MODE_IMMEDIATE_KHR) {
       printf("warning: IMMEDIATE present mode not available, using %s\n", present_mode_name(mode));
+    }
     fflush(stdout);
     sc->printed = true;
   }
@@ -251,9 +258,9 @@ bool swapchain_create(GpuDevice* dev, GpuSwapchain* sc) {
 
 void swapchain_destroy(GpuDevice* dev, GpuSwapchain* sc) {
   destroy_images(dev, sc);
-  if (sc->swapchain) vkDestroySwapchainKHR(dev->device, sc->swapchain, nullptr);
+  if (sc->swapchain) { vkDestroySwapchainKHR(dev->device, sc->swapchain, nullptr); }
   sc->swapchain = VK_NULL_HANDLE;
-  for (GpuFrame& f : sc->frames) destroy_frame(dev, f);
+  for (GpuFrame& f : sc->frames) { destroy_frame(dev, f); }
   destroy_frame(dev, sc->blit);
   sc->frame = 0;
 }
@@ -288,13 +295,13 @@ static bool acquire(GpuDevice* dev, GpuSwapchain* sc, VkSemaphore sem, uint32_t 
 }
 
 bool slot_begin(GpuDevice* dev, GpuSwapchain* sc, GpuFrame& f, uint32_t acquire_use) {
-  if (!sc->swapchain || sc->needs_recreate || sc->submit_failed) return false;
+  if (!sc->swapchain || sc->needs_recreate || sc->submit_failed) { return false; }
   {
     ZoneScopedN("frame_fence_wait");
     vkWaitForFences(dev->device, 1, &f.fence, VK_TRUE, UINT64_MAX);
   }
   sc->acquired = false;
-  if (acquire_use != vkc::USE_NONE && !acquire(dev, sc, f.image_acquired, acquire_use)) return false;
+  if (acquire_use != vkc::USE_NONE && !acquire(dev, sc, f.image_acquired, acquire_use)) { return false; }
   vkResetFences(dev->device, 1, &f.fence); // only after a successful acquire, so the fence is always submitted
   vkResetCommandPool(dev->device, f.pool, 0);
   VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -320,7 +327,7 @@ bool present(GpuDevice* dev, GpuSwapchain* sc, VkSemaphore render_finished) {
     return true;
   }
   if (r != VK_SUCCESS) {
-    if (r != VK_ERROR_OUT_OF_DATE_KHR) fprintf(stderr, "error: vkQueuePresentKHR failed (%d)\n", (int)r);
+    if (r != VK_ERROR_OUT_OF_DATE_KHR) { fprintf(stderr, "error: vkQueuePresentKHR failed (%d)\n", (int)r); }
     sc->needs_recreate = true;
     return false;
   }

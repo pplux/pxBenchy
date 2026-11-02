@@ -29,10 +29,10 @@ static constexpr Layout LAYOUTS[] = {
 static_assert(sizeof(LAYOUTS) / sizeof(LAYOUTS[0]) == USE_COUNT);
 
 Layout layout_of(uint32_t uses) {
-  if (!uses) return Layout::UNDEFINED;
+  if (!uses) { return Layout::UNDEFINED; }
   Layout l = LAYOUTS[std::countr_zero(uses)];
 #ifndef NDEBUG
-  for (uint32_t u = uses; u; u &= u - 1) assert(LAYOUTS[std::countr_zero(u)] == l);
+  for (uint32_t u = uses; u; u &= u - 1) { assert(LAYOUTS[std::countr_zero(u)] == l); }
 #endif
   return l;
 }

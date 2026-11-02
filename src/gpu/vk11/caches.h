@@ -5,7 +5,7 @@
 
 namespace vk11 {
 
-// Render passes and framebuffers, created on first use and kept until device_shutdown (GpuDevice::vk11_caches).
+// Render passes and framebuffers, created on first use and kept until device_shutdown (GpuDevice::mode).
 // Few entries (swapchain images x load ops + offscreen + targets): vectors, linear search.
 struct RenderPassEntry {
   VkFormat color = VK_FORMAT_UNDEFINED;
@@ -22,7 +22,7 @@ struct FramebufferEntry {
   VkFramebuffer h = VK_NULL_HANDLE;
 };
 
-struct Caches {
+struct Caches : GpuModeData {
   std::vector<RenderPassEntry> passes;
   std::vector<FramebufferEntry> framebuffers;
 };
@@ -38,7 +38,7 @@ VkRenderPass compat_render_pass(GpuDevice* dev, VkFormat color, VkFormat depth);
 VkFramebuffer framebuffer(GpuDevice* dev, VkRenderPass pass, VkImageView color, VkImageView depth, VkExtent2D extent);
 // Destroys every cached framebuffer referencing view; call before destroying the view. Device must be idle.
 void framebuffers_forget(GpuDevice* dev, VkImageView view);
-// Destroys all framebuffers and render passes and frees dev->vk11_caches. Safe when null.
+// Destroys all framebuffers and render passes and frees dev->mode. Safe when null.
 void caches_destroy(GpuDevice* dev);
 
 } // namespace vk11

@@ -16,8 +16,9 @@ void platform_thermal(PlatformThermal* out) { *out = PlatformThermal{}; }
 #endif
 
 void thermal_start() {
-  if (s_thread.joinable()) return;
+  if (s_thread.joinable()) { return; }
   s_stop = false;
+  s_latest = PlatformThermal{}; // a new session (Android relaunch in a cached process) starts from zeros
   s_thread = std::thread([] {
     tracy::SetThreadName("thermal");
     std::unique_lock<std::mutex> lock(s_mutex);
@@ -36,7 +37,7 @@ void thermal_start() {
 }
 
 void thermal_stop() {
-  if (!s_thread.joinable()) return;
+  if (!s_thread.joinable()) { return; }
   {
     std::lock_guard<std::mutex> lock(s_mutex);
     s_stop = true;

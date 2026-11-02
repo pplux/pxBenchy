@@ -136,16 +136,12 @@ One pass at a time. The target is the screen, or the offscreen image with `--off
 
 Inside a pass only.
 
-### gpu.text(x, y, str, {scale, color, bg})
-
-Bitmap text (8x8 font, ASCII) inside a pass. `x`, `y` in pixels from the top-left; cells are `8 * scale` pixels
-(`scale` integer >= 1, default 1); `\n` starts a new line. `color` and `bg` are `{r, g, b, a}` (default white on
-transparent).
-
 ### gpu.present() -> presented
 
 Ends the frame: submits, presents (not in `--offscreen`), handles window events, the warm-up reset and swapchain
-recreation. Returns whether an image reached the screen. Raises `quit requested` once the window is closed.
+recreation. Returns whether an image reached the screen. Raises `quit requested` once the window is closed, and
+`stopped (back)` on Back (Android) / Escape (macOS): the run ends with its report (command line: exit 1; menu: back
+to the menu).
 
 ### gpu.timer(name) -> timer
 

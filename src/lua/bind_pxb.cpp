@@ -46,11 +46,11 @@ static int load_glb_impl(lua_State* L, const char* path, Err* e) {
   int n = (int)lua_rawlen(L, 2);
   for (int i = 1; i <= n; i++) {
     lua_rawgeti(L, 2, i);
-    if (lua_type(L, -1) != LUA_TSTRING) return fail(e, "attribute list must contain strings");
+    if (lua_type(L, -1) != LUA_TSTRING) { return fail(e, "attribute list must contain strings"); }
     const char* s = lua_tostring(L, -1);
     int k = 0;
-    while (ATTR_NAMES[k] && strcmp(ATTR_NAMES[k], s)) k++;
-    if (!ATTR_NAMES[k]) return fail(e, "unknown attribute '%s'", s);
+    while (ATTR_NAMES[k] && strcmp(ATTR_NAMES[k], s)) { k++; }
+    if (!ATTR_NAMES[k]) { return fail(e, "unknown attribute '%s'", s); }
     attrs.push_back((AssetAttr)k);
     lua_pop(L, 1);
   }
@@ -93,7 +93,7 @@ static int l_load_glb(lua_State* L) {
   luaL_checktype(L, 2, LUA_TTABLE);
   Err e;
   int n = load_glb_impl(L, path, &e);
-  if (n < 0) return luaL_error(L, "pxb.load_glb: %s", e.msg);
+  if (n < 0) { return luaL_error(L, "pxb.load_glb: %s", e.msg); }
   return n;
 }
 
@@ -135,9 +135,7 @@ static int read_file_impl(lua_State* L, const char* path) {
   return 1;
 }
 
-static int l_read_file(lua_State* L) {
-  return read_file_impl(L, luaL_checkstring(L, 1));
-}
+static int l_read_file(lua_State* L) { return read_file_impl(L, luaL_checkstring(L, 1)); }
 
 // CPU timers: objects are full userdata holding an index, data lives in the TimerSet (outlives the Lua state). A
 // sentinel userdata (anchored in the registry) closes Tracy zones of timers left open at lua_close (__gc).
@@ -147,9 +145,7 @@ struct CpuTimerUD {
   uint32_t id;
 };
 
-static TimerSet* timer_set(lua_State* L) {
-  return *(TimerSet**)lua_touserdata(L, lua_upvalueindex(1));
-}
+static TimerSet* timer_set(lua_State* L) { return *(TimerSet**)lua_touserdata(L, lua_upvalueindex(1)); }
 
 static int l_cpu_time(lua_State* L) {
   lua_pushinteger(L, (lua_Integer)timer_now_ns());
@@ -157,8 +153,9 @@ static int l_cpu_time(lua_State* L) {
 }
 
 static int cpu_timer_impl(lua_State* L, TimerSet* ts, const char* name, Err* e) {
-  for (const CpuTimer& c : ts->cpu)
-    if (c.name == name) return fail(e, "timer '%s' already exists", name);
+  for (const CpuTimer& c : ts->cpu) {
+    if (c.name == name) { return fail(e, "timer '%s' already exists", name); }
+  }
   CpuTimer c;
   c.name = name;
 #ifdef TRACY_ENABLE
@@ -185,7 +182,7 @@ static int cpu_timer_impl(lua_State* L, TimerSet* ts, const char* name, Err* e) 
 static int l_cpu_timer(lua_State* L) {
   const char* name = luaL_checkstring(L, 1);
   Err e;
-  if (cpu_timer_impl(L, timer_set(L), name, &e) < 0) return luaL_error(L, "pxb.cpu_timer: %s", e.msg);
+  if (cpu_timer_impl(L, timer_set(L), name, &e) < 0) { return luaL_error(L, "pxb.cpu_timer: %s", e.msg); }
   return 1;
 }
 
@@ -205,15 +202,17 @@ static int cpu_timer_stop_impl(TimerSet* ts, uint32_t id, Err* e) {
   int64_t t1 = timer_now_ns();
   const char* name = ts->cpu[id].name.c_str();
   bool is_open = false;
-  for (const CpuTimerOpen& o : ts->open) is_open |= o.id == id;
-  if (!is_open) return fail(e, "timer '%s' is not open", name);
+  for (const CpuTimerOpen& o : ts->open) { is_open |= o.id == id; }
+  if (!is_open) { return fail(e, "timer '%s' is not open", name); }
   CpuTimerOpen& top = ts->open.back();
-  if (top.id != id)
-    return fail(e, "timer '%s' stopped out of order (innermost open timer is '%s')", name, ts->cpu[top.id].name.c_str());
+  if (top.id != id) {
+    return fail(e, "timer '%s' stopped out of order (innermost open timer is '%s')", name,
+                ts->cpu[top.id].name.c_str());
+  }
 #ifdef TRACY_ENABLE
   ___tracy_emit_zone_end(top.zone);
 #endif
-  if (!top.discard) ts->cpu[id].ns.push_back(t1 - top.t0);
+  if (!top.discard) { ts->cpu[id].ns.push_back(t1 - top.t0); }
   ts->open.pop_back();
   return 0;
 }
@@ -221,7 +220,7 @@ static int cpu_timer_stop_impl(TimerSet* ts, uint32_t id, Err* e) {
 static int cpu_timer_stop(lua_State* L) {
   uint32_t id = ((CpuTimerUD*)luaL_checkudata(L, 1, CPU_TIMER_MT))->id;
   Err e;
-  if (cpu_timer_stop_impl(timer_set(L), id, &e) < 0) return luaL_error(L, "cpu_timer:stop: %s", e.msg);
+  if (cpu_timer_stop_impl(timer_set(L), id, &e) < 0) { return luaL_error(L, "cpu_timer:stop: %s", e.msg); }
   return 0;
 }
 
@@ -241,11 +240,11 @@ static int sentinel_gc(lua_State* L) {
   if (!ts->open.empty()) {
     std::string names;
     for (size_t i = 0; i < ts->open.size(); i++) {
-      if (i) names += ", ";
+      if (i) { names += ", "; }
       names += ts->cpu[ts->open[i].id].name;
     }
 #ifdef TRACY_ENABLE
-    for (size_t i = ts->open.size(); i-- > 0;) ___tracy_emit_zone_end(ts->open[i].zone);
+    for (size_t i = ts->open.size(); i-- > 0;) { ___tracy_emit_zone_end(ts->open[i].zone); }
 #endif
     printf("warning: pxb timers still open: %s\n", names.c_str());
     fflush(stdout);

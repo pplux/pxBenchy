@@ -18,9 +18,9 @@ void timers_clear(GpuTimers* t); // drops accumulated results (frame and user ti
 // when the name exists.
 uint32_t timer_create(GpuTimers* t, const char* name);
 
-const std::vector<double>& timers_busy(const GpuTimers* t);                      // ns per frame
-const std::vector<double>& timers_interval(const GpuTimers* t);                  // ns per frame
-const std::vector<double>& timer_results(const GpuTimers* t, uint32_t id);      // ns per occurrence
+const std::vector<double>& timers_busy(const GpuTimers* t);                // ns per frame
+const std::vector<double>& timers_interval(const GpuTimers* t);            // ns per frame
+const std::vector<double>& timer_results(const GpuTimers* t, uint32_t id); // ns per occurrence
 
 } // namespace vkc
 

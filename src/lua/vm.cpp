@@ -27,7 +27,7 @@ static int vm_print(lua_State* L) {
   for (int i = 1; i <= n; i++) {
     size_t len;
     const char* s = luaL_tolstring(L, i, &len);
-    if (i > 1) line += '\t';
+    if (i > 1) { line += '\t'; }
     line.append(s, len);
     lua_pop(L, 1);
   }
@@ -49,10 +49,10 @@ int vm_stop(lua_State* L) {
 }
 
 static int msg_handler(lua_State* L) {
-  if (lua_touserdata(L, 1) == &g_stop) return 1;
+  if (lua_touserdata(L, 1) == &g_stop) { return 1; }
   const char* msg = lua_tostring(L, 1);
   if (msg == nullptr) {
-    if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) return 1;
+    if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) { return 1; }
     msg = lua_pushfstring(L, "(error object is a %s value)", luaL_typename(L, 1));
   }
   luaL_traceback(L, L, msg, 1);
@@ -62,13 +62,13 @@ static int msg_handler(lua_State* L) {
 // Mirrors lauxlib's luaL_newstate (alloc, panic, warnings) with the allocator reporting to Tracy pool "lua".
 static void* lua_alloc(void*, void* ptr, size_t, size_t nsize) {
   if (nsize == 0) {
-    if (ptr) TracyFreeN(ptr, "lua");
+    if (ptr) { TracyFreeN(ptr, "lua"); }
     free(ptr);
     return nullptr;
   }
   void* p = realloc(ptr, nsize);
   if (p) {
-    if (ptr) TracyFreeN(ptr, "lua");
+    if (ptr) { TracyFreeN(ptr, "lua"); }
     TracyAllocN(p, nsize, "lua");
   }
   return p;
@@ -86,9 +86,12 @@ static void warn_on(void* ud, const char* message, int tocont);
 static void warn_cont(void* ud, const char* message, int tocont);
 
 static int warn_control(lua_State* L, const char* message, int tocont) {
-  if (tocont || *(message++) != '@') return 0;
-  if (strcmp(message, "off") == 0) lua_setwarnf(L, warn_off, L);
-  else if (strcmp(message, "on") == 0) lua_setwarnf(L, warn_on, L);
+  if (tocont || *(message++) != '@') { return 0; }
+  if (strcmp(message, "off") == 0) {
+    lua_setwarnf(L, warn_off, L);
+  } else if (strcmp(message, "on") == 0) {
+    lua_setwarnf(L, warn_on, L);
+  }
   return 1;
 }
 
@@ -107,7 +110,7 @@ static void warn_cont(void* ud, const char* message, int tocont) {
 }
 
 static void warn_on(void* ud, const char* message, int tocont) {
-  if (warn_control((lua_State*)ud, message, tocont)) return;
+  if (warn_control((lua_State*)ud, message, tocont)) { return; }
   fprintf(stderr, "Lua warning: ");
   warn_cont(ud, message, tocont);
 }
@@ -128,10 +131,10 @@ static int vm_require(lua_State* L) {
   const char* name = luaL_checkstring(L, 1);
   lua_settop(L, 1);
   lua_getfield(L, LUA_REGISTRYINDEX, "pxb.loaded");
-  if (lua_getfield(L, 2, name) != LUA_TNIL) return 1;
+  if (lua_getfield(L, 2, name) != LUA_TNIL) { return 1; }
   lua_pop(L, 1);
   const char* path = lua_pushfstring(L, "scripts/%s.lua", name);
-  if (!load_module(L, path)) return lua_error(L);
+  if (!load_module(L, path)) { return lua_error(L); }
   lua_pushvalue(L, 1);
   lua_call(L, 1, 1);
   if (lua_isnil(L, -1)) {
@@ -153,8 +156,15 @@ lua_State* vm_create() {
     report_error("cannot create Lua state");
     return nullptr;
   }
-  // No io/os/package/debug: file access goes through the platform layer (pxb.read_file, require).
-  luaL_openselectedlibs(L, LUA_GLIBK | LUA_COLIBK | LUA_MATHLIBK | LUA_STRLIBK | LUA_TABLIBK | LUA_UTF8LIBK, 0);
+  // No io/os/package/debug: file access goes through the platform layer (pxb.read_file, require). linit.c (which
+  // references every library) is not compiled: open each one as luaL_openselectedlibs does.
+  static const luaL_Reg libs[] = {{LUA_GNAME, luaopen_base},       {LUA_COLIBNAME, luaopen_coroutine},
+                                  {LUA_MATHLIBNAME, luaopen_math}, {LUA_STRLIBNAME, luaopen_string},
+                                  {LUA_TABLIBNAME, luaopen_table}, {LUA_UTF8LIBNAME, luaopen_utf8}};
+  for (const luaL_Reg& lib : libs) {
+    luaL_requiref(L, lib.name, lib.func, 1);
+    lua_pop(L, 1);
+  }
   lua_pushnil(L);
   lua_setglobal(L, "dofile");
   lua_pushnil(L);
@@ -178,8 +188,8 @@ bool vm_run(lua_State* L, const std::string& path) {
   int base = lua_gettop(L);
   std::string chunk = "@" + path;
   int rc = luaL_loadbufferx(L, buf.data(), buf.size(), chunk.c_str(), "t");
-  if (rc == LUA_OK) rc = lua_pcall(L, 0, 0, base);
-  if (rc != LUA_OK && lua_touserdata(L, -1) == &g_stop) rc = LUA_OK;
+  if (rc == LUA_OK) { rc = lua_pcall(L, 0, 0, base); }
+  if (rc != LUA_OK && lua_touserdata(L, -1) == &g_stop) { rc = LUA_OK; }
   if (rc != LUA_OK) {
     const char* m = lua_tostring(L, -1);
     report_error(m ? m : "(unknown error)");
@@ -191,5 +201,5 @@ bool vm_run(lua_State* L, const std::string& path) {
 }
 
 void vm_destroy(lua_State* L) {
-  if (L) lua_close(L);
+  if (L) { lua_close(L); }
 }

@@ -10,12 +10,12 @@ enum class AssetAttr { position, normal, tangent, uv0, uv1, color0 };
 enum class AssetIndexType { u16, u32 };
 
 struct AssetMesh {
-  std::vector<uint8_t> vertices;  // interleaved float32, in request order
-  uint32_t vertex_count = 0, stride = 0;  // stride in bytes
+  std::vector<uint8_t> vertices;         // interleaved float32, in request order
+  uint32_t vertex_count = 0, stride = 0; // stride in bytes
   std::vector<uint8_t> indices;
   AssetIndexType index_type = AssetIndexType::u16;
   uint32_t index_count = 0;
-  float aabb_min[3] = {}, aabb_max[3] = {};  // from the POSITION accessor, always filled
+  float aabb_min[3] = {}, aabb_max[3] = {}; // from the POSITION accessor, always filled
 };
 
 // CPU-only. Parses .glb bytes (all buffers embedded in the BIN chunk) and extracts mesh 0, primitive 0

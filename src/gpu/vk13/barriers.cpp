@@ -6,7 +6,7 @@ namespace vk13 {
 
 void ensure_state(VkCommandBuffer cmd, GpuBuffer* buf, vkc::State want) {
   vkc::State from;
-  if (!vkc::part::track(&buf->state, want, false, &from)) return;
+  if (!vkc::part::track(&buf->state, want, false, &from)) { return; }
   Sync src = sync_of(from.uses), dst = sync_of(want.uses);
   VkBufferMemoryBarrier2 b = {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
   b.srcStageMask = src.stage;
@@ -31,7 +31,7 @@ void ensure_state(VkCommandBuffer cmd, GpuTexture* tex, vkc::State want) {
 void ensure_state(VkCommandBuffer cmd, GpuTexture* tex, uint32_t first_mip, uint32_t mip_count, vkc::State want) {
   vkc::part::MipTransition ts[PXB_MAX_MIPS];
   uint32_t n = vkc::part::track_mips(tex->state, first_mip, mip_count, want, ts);
-  if (!n) return;
+  if (!n) { return; }
   VkImageAspectFlags aspect =
       tex->kind == GpuTextureKind::depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
   VkImageMemoryBarrier2 bs[PXB_MAX_MIPS];
@@ -59,7 +59,7 @@ void ensure_state(VkCommandBuffer cmd, GpuTexture* tex, uint32_t first_mip, uint
 
 void ensure_state(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, vkc::State* tracked, vkc::State want) {
   vkc::State from;
-  if (!vkc::part::track(tracked, want, true, &from)) return;
+  if (!vkc::part::track(tracked, want, true, &from)) { return; }
   Sync src = sync_of(from.uses), dst = sync_of(want.uses);
   VkImageMemoryBarrier2 b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
   b.srcStageMask = src.stage;

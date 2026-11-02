@@ -1,9 +1,12 @@
 -- Demo 2: demo1_instancing (same data, camera, shaders, floor), grid drawn direct vs vkCmdDrawIndexedIndirect.
--- Four modes alternate every frame, each with its own CPU + GPU timers (report + Tracy zones). "pass"
+-- Six modes alternate every frame, each with its own CPU + GPU timers (report + Tracy zones). "pass"
 -- spans the whole pass: on tiled GPUs (Apple) draws execute at pass resolve, so "draw" alone reads ~0.
+--   none: no grid draw (clear + floor only), baseline for the other modes; "draw" times an empty timer pair
 --   instanced: vkCmdDrawIndexed, N instances (demo1's draw)
 --   indirect-instanced: one indirect command, N instances (demo1's draw, arguments from a buffer)
 --   indirect-per-object: N indirect commands of 1 instance each, firstInstance = i (multi-draw indirect)
+--   indirect-per-object-empty: indirect-per-object with indexCount = 0 in every command (all objects culled, as a
+--     compute culling pass would leave them): cost of the commands alone, nothing rendered
 --   indirect-instanced-upload: indirect-instanced with the command rewritten every frame (staged buffer: CPU write,
 --     copy + barriers inside the "pass" timer)
 -- Runs --frames-warmup + --frames frames (the app resets timers after warm-up and prints the report).
@@ -44,6 +47,9 @@ for i = 0, N - 1 do cmds[i + 1] = string.pack(CMD, m.index_count, 1, 0, 0, i) en
 local ind_upload = gpu.buffer{size = 20, usage = "indirect"} -- rewritten every frame
 local ind_per_object = gpu.buffer{size = 20 * N, usage = "indirect"}
 ind_per_object:open(); ind_per_object:write(0, table.concat(cmds)); ind_per_object:close()
+for i = 0, N - 1 do cmds[i + 1] = string.pack(CMD, 0, 1, 0, 0, i) end
+local ind_per_object_empty = gpu.buffer{size = 20 * N, usage = "indirect"}
+ind_per_object_empty:open(); ind_per_object_empty:write(0, table.concat(cmds)); ind_per_object_empty:close()
 
 -- one big red cube underneath the grid (uniform scale), top face just below the instances
 local c = assert(pxb.load_glb(FLOOR_MODEL, {"position", "normal"}))
@@ -117,6 +123,20 @@ local function draw_floor()
     count = c.index_count, instances = 1, push = big_push}
 end
 
+local none_cpu, none_draw, none_pass = pxb.cpu_timer("frame none"), gpu.timer("draw none"), gpu.timer("pass none")
+local function frame_none()
+  none_cpu:start()
+  none_pass:start()
+  gpu.begin_pass{clear = CLEAR, depth = true}
+  none_draw:start()
+  none_draw:stop()
+  draw_floor()
+  gpu.end_pass()
+  none_pass:stop()
+  gpu.present()
+  none_cpu:stop()
+end
+
 local instanced_cpu, instanced_draw, instanced_pass =
   pxb.cpu_timer("frame instanced"), gpu.timer("draw instanced"), gpu.timer("pass instanced")
 local function frame_instanced()
@@ -168,6 +188,23 @@ local function frame_indirect_per_object()
   per_obj_cpu:stop()
 end
 
+local empty_cpu, empty_draw, empty_pass = pxb.cpu_timer("frame indirect-per-object-empty"),
+  gpu.timer("draw indirect-per-object-empty"), gpu.timer("pass indirect-per-object-empty")
+local function frame_indirect_per_object_empty()
+  empty_cpu:start()
+  empty_pass:start()
+  gpu.begin_pass{clear = CLEAR, depth = true}
+  empty_draw:start()
+  gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
+    indirect = ind_per_object_empty, draw_count = N, push = push}
+  empty_draw:stop()
+  draw_floor()
+  gpu.end_pass()
+  empty_pass:stop()
+  gpu.present()
+  empty_cpu:stop()
+end
+
 local upload_cpu, upload_draw, upload_pass = pxb.cpu_timer("frame indirect-instanced-upload"),
   gpu.timer("draw indirect-instanced-upload"), gpu.timer("pass indirect-instanced-upload")
 local function frame_indirect_instanced_upload()
@@ -186,11 +223,13 @@ local function frame_indirect_instanced_upload()
   upload_cpu:stop()
 end
 
--- one frame of each mode per iteration, (--frames-warmup + --frames) / 4 iterations; --frames 0 = until the window closes
+-- one frame of each mode per iteration, (--frames-warmup + --frames) / 6 iterations; --frames 0 = until the window closes
 local total = pxb.args.frames_warmup + pxb.args.frames
-for _ = 1, pxb.args.frames == 0 and math.maxinteger or total // 4 do
+for _ = 1, pxb.args.frames == 0 and math.maxinteger or total // 6 do
+  frame_none()
   frame_instanced()
   frame_indirect_instanced()
   frame_indirect_per_object()
+  frame_indirect_per_object_empty()
   frame_indirect_instanced_upload()
 end

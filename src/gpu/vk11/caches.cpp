@@ -3,6 +3,8 @@
 
 namespace vk11 {
 
+static Caches* caches(GpuDevice* dev) { return static_cast<Caches*>(dev->mode.get()); }
+
 static VkRenderPass create_render_pass(GpuDevice* dev, VkFormat color, VkFormat depth, VkAttachmentLoadOp load) {
   VkAttachmentDescription atts[2] = {};
   atts[0].format = color;
@@ -46,11 +48,12 @@ static VkRenderPass create_render_pass(GpuDevice* dev, VkFormat color, VkFormat 
 }
 
 VkRenderPass render_pass(GpuDevice* dev, VkFormat color, VkFormat depth, VkAttachmentLoadOp load) {
-  Caches* c = dev->vk11_caches;
-  for (const RenderPassEntry& e : c->passes)
-    if (e.color == color && e.depth == depth && e.load == load) return e.h;
+  Caches* c = caches(dev);
+  for (const RenderPassEntry& e : c->passes) {
+    if (e.color == color && e.depth == depth && e.load == load) { return e.h; }
+  }
   VkRenderPass h = create_render_pass(dev, color, depth, load);
-  if (h) c->passes.push_back({color, depth, load, h});
+  if (h) { c->passes.push_back({color, depth, load, h}); }
   return h;
 }
 
@@ -59,11 +62,13 @@ VkRenderPass compat_render_pass(GpuDevice* dev, VkFormat color, VkFormat depth) 
 }
 
 VkFramebuffer framebuffer(GpuDevice* dev, VkRenderPass pass, VkImageView color, VkImageView depth, VkExtent2D extent) {
-  Caches* c = dev->vk11_caches;
-  for (const FramebufferEntry& e : c->framebuffers)
+  Caches* c = caches(dev);
+  for (const FramebufferEntry& e : c->framebuffers) {
     if (e.pass == pass && e.color == color && e.depth == depth && e.extent.width == extent.width &&
-        e.extent.height == extent.height)
+        e.extent.height == extent.height) {
       return e.h;
+    }
+  }
   VkImageView views[2] = {color, depth};
   VkFramebufferCreateInfo ci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
   ci.renderPass = pass;
@@ -83,8 +88,8 @@ VkFramebuffer framebuffer(GpuDevice* dev, VkRenderPass pass, VkImageView color, 
 }
 
 void framebuffers_forget(GpuDevice* dev, VkImageView view) {
-  Caches* c = dev->vk11_caches;
-  if (!c || !view) return;
+  Caches* c = caches(dev);
+  if (!c || !view) { return; }
   for (size_t i = 0; i < c->framebuffers.size();) {
     FramebufferEntry& e = c->framebuffers[i];
     if (e.color == view || e.depth == view) {
@@ -98,12 +103,11 @@ void framebuffers_forget(GpuDevice* dev, VkImageView view) {
 }
 
 void caches_destroy(GpuDevice* dev) {
-  Caches* c = dev->vk11_caches;
-  if (!c) return;
-  for (const FramebufferEntry& e : c->framebuffers) vkDestroyFramebuffer(dev->device, e.h, nullptr);
-  for (const RenderPassEntry& e : c->passes) vkDestroyRenderPass(dev->device, e.h, nullptr);
-  delete c;
-  dev->vk11_caches = nullptr;
+  Caches* c = caches(dev);
+  if (!c) { return; }
+  for (const FramebufferEntry& e : c->framebuffers) { vkDestroyFramebuffer(dev->device, e.h, nullptr); }
+  for (const RenderPassEntry& e : c->passes) { vkDestroyRenderPass(dev->device, e.h, nullptr); }
+  dev->mode.reset();
 }
 
 } // namespace vk11

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(pxbenchy C CXX)
+# the app version (Android versionName; versionCode = major*10000 + minor*100 + patch)
+project(pxbenchy VERSION 0.1.0 LANGUAGES C CXX)
 if(APPLE)
   enable_language(OBJCXX)
 endif()
@@ -9,13 +10,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-option(PXB_TRACY "Enable Tracy profiler" ON)
+# Release / MinSizeRel: no validation, Tracy off by default. Other build types: validation, Tracy on by default.
+# PXB_TRACY is cached at the first configure: -DPXB_TRACY=ON|OFF overrides it in any build type.
+if(CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$")
+  set(PXB_VALIDATION OFF)
+else()
+  set(PXB_VALIDATION ON)
+endif()
+option(PXB_TRACY "Enable Tracy profiler" ${PXB_VALIDATION})
 
 set(DEPS ${CMAKE_CURRENT_SOURCE_DIR}/deps)
 
-# lua (everything except standalone programs, amalgamation and test harness)
+# lua (everything except standalone programs, amalgamation, test harness, os library and linit: vm.cpp opens the
+# libraries it uses)
 file(GLOB LUA_SOURCES ${DEPS}/lua/*.c)
-list(FILTER LUA_SOURCES EXCLUDE REGEX "/(lua|luac|onelua|ltests)\\.c$")
+list(FILTER LUA_SOURCES EXCLUDE REGEX "/(lua|luac|onelua|ltests|loslib|linit)\\.c$")
 add_library(lua STATIC ${LUA_SOURCES})
 target_include_directories(lua PUBLIC ${DEPS}/lua)
 
@@ -35,6 +44,11 @@ target_include_directories(tinygltf PUBLIC ${DEPS}/tinygltf)
 # stb_image (C implementation unit, PNG/JPEG from memory) + stb_image_write (--screenshot PNG)
 add_library(stb_image STATIC src/asset/stb_image.c src/asset/stb_image_write.c)
 target_include_directories(stb_image PUBLIC ${DEPS}/stb)
+
+# imgui (core only: no demo, no backends; rendered by src/gpu, input fed by src/platform)
+add_library(imgui STATIC ${DEPS}/imgui/imgui.cpp ${DEPS}/imgui/imgui_draw.cpp ${DEPS}/imgui/imgui_tables.cpp
+  ${DEPS}/imgui/imgui_widgets.cpp)
+target_include_directories(imgui SYSTEM PUBLIC ${DEPS}/imgui)
 
 # tracy
 add_library(tracy STATIC ${DEPS}/tracy/public/TracyClient.cpp)
@@ -57,15 +71,21 @@ add_subdirectory(${DEPS}/glslang EXCLUDE_FROM_ALL)
 
 set(PXB_SOURCES src/main.cpp src/gpu/vkc/device.cpp src/gpu/vk13/device.cpp src/gpu/vkc/vma.cpp src/gpu/vkc/swapchain.cpp
   src/gpu/vk13/swapchain.cpp src/gpu/vkc/shader.cpp
-  src/gpu/vkc/timers.cpp src/gpu/vk13/timers.cpp src/gpu/vkc/text.cpp src/gpu/vk13/text.cpp src/gpu/vkc/screenshot.cpp src/gpu/vk13/screenshot.cpp src/asset/gltf.cpp src/lua/vm.cpp src/lua/bind_gpu.cpp src/lua/bind_pxb.cpp
+  src/gpu/vkc/timers.cpp src/gpu/vk13/timers.cpp src/gpu/vkc/screenshot.cpp src/gpu/vk13/screenshot.cpp src/asset/gltf.cpp src/lua/vm.cpp src/lua/bind_gpu.cpp src/lua/bind_pxb.cpp
   src/lua/bind_math.cpp src/gpu/vk13/sync.cpp src/gpu/vk13/barriers.cpp src/gpu/vkc/sync.cpp src/gpu/vkc/barriers.cpp
   src/gpu/vkc/resources.cpp src/gpu/vk13/resources.cpp src/gpu/vkc/pipeline.cpp src/gpu/vk13/pipeline.cpp
   src/gpu/vkc/pass.cpp src/gpu/vk13/pass.cpp src/gpu/vkc/descriptors.cpp src/gpu/vk11/sync.cpp src/gpu/vk11/barriers.cpp
   src/gpu/vk11/device.cpp src/gpu/vk11/caches.cpp src/gpu/vk11/resources.cpp src/gpu/vk11/pipeline.cpp
-  src/gpu/vk11/pass.cpp src/gpu/vk11/screenshot.cpp src/gpu/vk11/swapchain.cpp src/gpu/vk11/timers.cpp src/gpu/vk11/text.cpp
-  src/lua/timers_report.cpp src/lua/gpu_api.cpp src/platform/thermal.cpp)
-# src/gpu/vkc is private to src/gpu: src/lua and src/main.cpp go through gpu/vk.h, gpu/vk13.h (+ lua/gpu_api.h)
-file(GLOB_RECURSE PXB_GPU_CALLERS CONFIGURE_DEPENDS src/lua/*.h src/lua/*.cpp src/main.cpp)
+  src/gpu/vk11/pass.cpp src/gpu/vk11/screenshot.cpp src/gpu/vk11/swapchain.cpp src/gpu/vk11/timers.cpp
+  src/gpu/vkc/imgui.cpp src/gpu/vk11/imgui.cpp src/gpu/vk13/imgui.cpp
+  src/gpu/vkc/info.cpp src/gpu/vk11/info.cpp src/gpu/vk13/info.cpp
+  src/lua/timers_report.cpp src/lua/gpu_api.cpp src/platform/thermal.cpp src/platform/pointer.cpp
+  src/session.cpp src/menu.cpp src/ui.cpp src/device_info.cpp src/json.cpp)
+# src/gpu/vkc is private to src/gpu: src/lua, src/main.cpp, src/session.*, src/menu.*, src/ui.* and src/device_info.*
+# go through gpu/vk.h, gpu/vk13.h (+ lua/gpu_api.h)
+file(GLOB_RECURSE PXB_GPU_CALLERS CONFIGURE_DEPENDS src/lua/*.h src/lua/*.cpp src/main.cpp
+  src/session.h src/session.cpp src/menu.h src/menu.cpp src/ui.h src/ui.cpp src/device_info.h
+  src/device_info.cpp)
 foreach(f ${PXB_GPU_CALLERS})
   file(STRINGS ${f} vkc_includes REGEX "#include \"gpu/vkc/")
   if(vkc_includes)
@@ -78,14 +98,18 @@ else()
   add_executable(pxbenchy ${PXB_SOURCES})
 endif()
 target_include_directories(pxbenchy PRIVATE src)
+if(PXB_VALIDATION)
+  target_compile_definitions(pxbenchy PRIVATE PXB_VALIDATION)
+endif()
 # git hash stamped at build time (startup line + HUD)
 add_custom_target(git_version
   COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/git_version.h
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/git_version.cmake
   BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/git_version.h)
 add_dependencies(pxbenchy git_version)
+target_compile_definitions(pxbenchy PRIVATE PXB_VERSION="${PROJECT_VERSION}" PXB_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 target_include_directories(pxbenchy PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(pxbenchy SYSTEM PRIVATE ${DEPS}/vma/include ${DEPS}/font8x8)
+target_include_directories(pxbenchy SYSTEM PRIVATE ${DEPS}/vma/include)
 if(APPLE)
   # baked Vulkan loader / validation layer paths (used only if the default lookup fails; loader not linked)
   find_library(PXB_VULKAN_LOADER NAMES vulkan.1 vulkan HINTS /opt/homebrew/lib /usr/local/lib)
@@ -111,11 +135,15 @@ if(APPLE)
   target_link_libraries(pxbenchy PRIVATE "-framework Cocoa" "-framework QuartzCore" "-framework Metal")
 endif()
 if(ANDROID)
+  # "versionCode versionName" for android/build_apk.sh
+  math(EXPR PXB_VERSION_CODE
+    "${PROJECT_VERSION_MAJOR} * 10000 + ${PROJECT_VERSION_MINOR} * 100 + ${PROJECT_VERSION_PATCH}")
+  file(WRITE ${CMAKE_BINARY_DIR}/android_version.txt "${PXB_VERSION_CODE} ${PROJECT_VERSION}\n")
   add_library(native_app_glue STATIC ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
   target_include_directories(native_app_glue PUBLIC ${CMAKE_ANDROID_NDK}/sources/android/native_app_glue)
   # keep the glue's entry point alive in the shared library
   target_link_libraries(pxbenchy PRIVATE native_app_glue android log)
   target_link_options(pxbenchy PRIVATE -u ANativeActivity_onCreate -Wl,-z,max-page-size=16384)
 endif()
-target_link_libraries(pxbenchy PRIVATE lua volk tinygltf stb_image tracy
+target_link_libraries(pxbenchy PRIVATE lua volk tinygltf stb_image imgui tracy
   glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)

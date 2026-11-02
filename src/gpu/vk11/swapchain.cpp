@@ -11,9 +11,9 @@ namespace vk11 {
 static bool end(GpuDevice* dev, GpuSwapchain* sc, GpuFrame& f, uint32_t acquire_use) {
   bool present = sc->acquired;
   sc->acquired = false;
-  if (present)
-    ensure_state(f.cmd, sc->images[sc->image], VK_IMAGE_ASPECT_COLOR_BIT, &sc->image_states[sc->image],
-                 {vkc::PRESENT});
+  if (present) {
+    ensure_state(f.cmd, sc->images[sc->image], VK_IMAGE_ASPECT_COLOR_BIT, &sc->image_states[sc->image], {vkc::PRESENT});
+  }
   vkEndCommandBuffer(f.cmd);
 
   VkSemaphore render_finished = present ? sc->render_finished[sc->image] : VK_NULL_HANDLE;
@@ -37,17 +37,18 @@ static bool end(GpuDevice* dev, GpuSwapchain* sc, GpuFrame& f, uint32_t acquire_
     sc->submit_failed = true;
     return false;
   }
-  if (!present) return false;
+  if (!present) { return false; }
   return vkc::part::present(dev, sc, render_finished);
 }
 
 bool frame_begin(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer* out_cmd) {
   GpuFrame& f = sc->frames[sc->frame];
-  if (!vkc::part::slot_begin(dev, sc, f, sc->offscreen ? vkc::USE_NONE : vkc::ACQUIRE_COLOR)) return false;
+  if (!vkc::part::slot_begin(dev, sc, f, sc->offscreen ? vkc::USE_NONE : vkc::ACQUIRE_COLOR)) { return false; }
   TracyVkCollect(dev->tracy, f.cmd);
-  if (sc->acquired)
+  if (sc->acquired) {
     ensure_state(f.cmd, sc->images[sc->image], VK_IMAGE_ASPECT_COLOR_BIT, &sc->image_states[sc->image],
                  {vkc::COLOR_ATTACH_WRITE});
+  }
   *out_cmd = f.cmd;
   return true;
 }
@@ -55,7 +56,7 @@ bool frame_begin(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer* out_cmd) {
 bool frame_end(GpuDevice* dev, GpuSwapchain* sc) {
   GpuFrame& f = sc->frames[sc->frame];
   bool ok = end(dev, sc, f, vkc::ACQUIRE_COLOR);
-  if (!sc->submit_failed) sc->frame = (sc->frame + 1) % PXB_FRAMES_IN_FLIGHT;
+  if (!sc->submit_failed) { sc->frame = (sc->frame + 1) % PXB_FRAMES_IN_FLIGHT; }
   return ok;
 }
 
@@ -72,7 +73,7 @@ static constexpr vkc::State COPY_SRC = {vkc::COPY_SRC};
 static constexpr vkc::State COPY_DST = {vkc::COPY_DST};
 
 bool capture(GpuDevice* dev, GpuSwapchain* sc) {
-  if (!sc->offscreen || !vkc::part::slot_begin(dev, sc, sc->blit, vkc::USE_NONE)) return false;
+  if (!sc->offscreen || !vkc::part::slot_begin(dev, sc, sc->blit, vkc::USE_NONE)) { return false; }
   VkCommandBuffer cmd = sc->blit.cmd;
   ensure_state(cmd, &sc->offscreen_tex, COPY_SRC);
   ensure_state(cmd, &sc->capture, COPY_DST);
@@ -82,7 +83,7 @@ bool capture(GpuDevice* dev, GpuSwapchain* sc) {
 }
 
 bool blit_begin(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer* out_cmd) {
-  if (!sc->offscreen || !vkc::part::slot_begin(dev, sc, sc->blit, vkc::ACQUIRE_COPY)) return false;
+  if (!sc->offscreen || !vkc::part::slot_begin(dev, sc, sc->blit, vkc::ACQUIRE_COPY)) { return false; }
   VkCommandBuffer cmd = sc->blit.cmd;
   ensure_state(cmd, &sc->capture, COPY_SRC);
   ensure_state(cmd, sc->images[sc->image], VK_IMAGE_ASPECT_COLOR_BIT, &sc->image_states[sc->image], COPY_DST);
@@ -96,10 +97,10 @@ bool blit_end(GpuDevice* dev, GpuSwapchain* sc) { return end(dev, sc, sc->blit, 
 // Forgets cached framebuffers on every view vkc's destroy_images destroys (swapchain image views, offscreen_tex and
 // capture views). Device must be idle.
 static void forget_views(GpuDevice* dev, GpuSwapchain* sc) {
-  for (VkImageView v : sc->views) framebuffers_forget(dev, v);
+  for (VkImageView v : sc->views) { framebuffers_forget(dev, v); }
   for (GpuTexture* t : {&sc->offscreen_tex, &sc->capture}) {
     framebuffers_forget(dev, t->view);
-    for (VkImageView v : t->mip_views) framebuffers_forget(dev, v);
+    for (VkImageView v : t->mip_views) { framebuffers_forget(dev, v); }
   }
 }
 

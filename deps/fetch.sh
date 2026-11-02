@@ -14,8 +14,8 @@ DEPS=(
   "tinygltf       syoyo/tinygltf              v3.0.1"
   "tracy          wolfpld/tracy               v0.14.1"
   "vma            GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator v3.5.0"
-  "font8x8        dhepper/font8x8             8e279d2d864e79128e96188a6b9526cfa3fbfef9"
   "stb            nothings/stb                003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5"
+  "imgui          ocornut/imgui               v1.93.0"
 )
 
 # Resolve a ref to its commit SHA (annotated tags dereferenced via ^{}).

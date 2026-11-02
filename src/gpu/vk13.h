@@ -3,58 +3,66 @@
 #include "gpu/vk.h"
 #include "gpu/vkc/descriptors.h"
 #include "gpu/vkc/device.h"
+#include "gpu/vkc/imgui.h"
 #include "gpu/vkc/pass.h"
 #include "gpu/vkc/pipeline.h"
 #include "gpu/vkc/resources.h"
 #include "gpu/vkc/screenshot.h"
 #include "gpu/vkc/shader.h"
 #include "gpu/vkc/swapchain.h"
-#include "gpu/vkc/text.h"
 #include "gpu/vkc/timers.h"
 
 namespace vk13 {
 
 // Mode-neutral (vkc), shared by all modes.
-using vkc::surface_create;
-using vkc::surface_destroy;
-using vkc::device_shutdown;
-using vkc::shader_init;
-using vkc::shader_shutdown;
 using vkc::buffer_create;
 using vkc::buffer_destroy;
 using vkc::buffer_open;
 using vkc::buffer_write;
-using vkc::texture_create;
-using vkc::texture_destroy;
+using vkc::descriptors_alloc;
+using vkc::descriptors_destroy;
+using vkc::descriptors_frame_begin;
+using vkc::descriptors_write;
+using vkc::device_shutdown;
+using vkc::draw;
+using vkc::imgui_draw;
+using vkc::imgui_shutdown;
 using vkc::layout_build;
+using vkc::layout_field_is_int;
 using vkc::layout_pack;
 using vkc::layout_pack_u32;
-using vkc::layout_field_is_int;
-using vkc::pipeline_destroy;
-using vkc::draw;
 using vkc::pass_shutdown;
-using vkc::descriptors_frame_begin;
-using vkc::descriptors_alloc;
-using vkc::descriptors_write;
-using vkc::descriptors_destroy;
+using vkc::pipeline_destroy;
 using vkc::present_mode_name;
+using vkc::screenshot_destroy;
+using vkc::screenshot_write;
+using vkc::shader_init;
+using vkc::shader_shutdown;
+using vkc::surface_create;
+using vkc::surface_destroy;
 using vkc::swapchain_create;
 using vkc::swapchain_destroy;
-using vkc::screenshot_write;
-using vkc::screenshot_destroy;
-using vkc::timers_init;
-using vkc::timers_shutdown;
-using vkc::timers_break_interval;
-using vkc::timers_resolve_all;
-using vkc::timers_clear;
+using vkc::texture_create;
+using vkc::texture_destroy;
 using vkc::timer_create;
-using vkc::timers_busy;
-using vkc::timers_interval;
 using vkc::timer_results;
-using vkc::text_draw;
-using vkc::text_shutdown;
+using vkc::timers_break_interval;
+using vkc::timers_busy;
+using vkc::timers_clear;
+using vkc::timers_init;
+using vkc::timers_interval;
+using vkc::timers_resolve_all;
+using vkc::timers_shutdown;
 
 bool device_init(GpuDevice* dev, bool validation, void* native_surface); // instance + surface + device
+// Probe (temporary instance, no surface or validation): a physical device has apiVersion >= 1.3, dynamicRendering and
+// synchronization2 (the device_init test, without the swapchain / present queue check). Leaves volk's global instance
+// and device functions untouched.
+bool supported();
+// Vulkan info as a probe instance of this version sees it (temporary instance, no surface or validation): instance
+// version, extensions and layers, then every physical device of this version with its properties, limits, features,
+// memory, queues, extensions and formats. JSON object, members indented from `depth`; "null" without such an instance.
+std::string info_json(int depth);
 
 // Brings a resource from its tracked state to `want`, recording at most one vkCmdPipelineBarrier2 into cmd.
 // Barrier when tracked or wanted uses have a write (vkc::USE_WRITES), or (images) the layout differs; src = tracked,
@@ -108,8 +116,8 @@ bool pass_end(GpuPassCtx* ctx);
 // there is no swapchain or it needs recreating.
 bool frame_begin(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer* out_cmd);
 // With an acquired image: transitions it to PRESENT_SRC_KHR, submits and presents; returns true if the present
-// succeeded. Without (offscreen): submits only, returns false. A submit failure sets submit_failed; the slot fence stays
-// unsignaled, so frame_begin must not be called again.
+// succeeded. Without (offscreen): submits only, returns false. A submit failure sets submit_failed; the slot fence
+// stays unsignaled, so frame_begin must not be called again.
 bool frame_end(GpuDevice* dev, GpuSwapchain* sc);
 // Offscreen, outside a frame: waits the previous capture/blit, submits the copy offscreen_tex -> capture (queue order:
 // after the last submitted frame, no acquire). False when there is no swapchain or the submit failed.
@@ -122,22 +130,34 @@ bool blit_begin(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer* out_cmd);
 bool blit_end(GpuDevice* dev, GpuSwapchain* sc);
 
 // Inside an open frame, before the HUD: records a copy of the frame's render target (acquired swapchain image, or
-// offscreen_tex) into a new host-readable buffer. Needs GpuSwapchain::readable without --offscreen. False (prints, nothing
-// recorded) on an unsupported format or allocation failure.
+// offscreen_tex) into a new host-readable buffer. Needs GpuSwapchain::readable without --offscreen. False (prints,
+// nothing recorded) on an unsupported format or allocation failure.
 bool screenshot_record(GpuDevice* dev, GpuSwapchain* sc, VkCommandBuffer cmd, GpuScreenshot* shot);
 
-// Call right after vk13::frame_begin (slot fence already waited): resolves the slot's previous frame, resets its pool and
-// writes the frame-start timestamp and opens the Tracy GPU zone `gpu_frame`. Fails (prints) if a frame is already open.
+// Call right after vk13::frame_begin (slot fence already waited): resolves the slot's previous frame, resets its pool
+// and writes the frame-start timestamp and opens the Tracy GPU zone `gpu_frame`. Fails (prints) if a frame is already
+// open.
 bool timers_frame_begin(GpuDevice* dev, GpuSwapchain* sc, GpuTimers* t, VkCommandBuffer cmd);
-// Call right before vk13::frame_end: closes `gpu_frame` and writes the frame-end timestamp. Timers still open are reported (prints), closed
-// in the Tracy zone and discarded. Fails (prints) outside a frame.
+// Call right before vk13::frame_end: closes `gpu_frame` and writes the frame-end timestamp. Timers still open are
+// reported (prints), closed in the Tracy zone and discarded. Fails (prints) outside a frame.
 bool timers_frame_end(GpuTimers* t, VkCommandBuffer cmd);
 // Same command buffer as the open frame, LIFO, a timer cannot be nested in itself. Fail (print) otherwise.
 bool timer_begin(GpuTimers* t, VkCommandBuffer cmd, uint32_t id);
 bool timer_end(GpuTimers* t, VkCommandBuffer cmd, uint32_t id);
 
-bool text_init(GpuDevice* dev, GpuText* t, VkFormat color_format);
+// ImGui renderer (draw/shutdown in vkc/imgui.h). Needs a current ImGui context: registers itself as its renderer
+// backend (RendererHasTextures: font atlas and other textures are created/updated/destroyed on ImGui's requests).
+// After dev->transform is set (first swapchain_create).
+bool imgui_init(GpuDevice* dev, GpuImGui* im, VkFormat color_format);
 // Recreates the pipeline when color_format differs (after a swapchain recreate; device must be idle).
-bool text_set_format(GpuDevice* dev, GpuText* t, VkFormat color_format);
+bool imgui_set_format(GpuDevice* dev, GpuImGui* im, VkFormat color_format);
+// Outside a pass, after ImGui::Render(), on the open frame's command buffer (after frame_begin) or the offscreen blit's
+// (after blit_begin); then imgui_draw with the same dd inside a pass on that command buffer, at most once. Buffers
+// are kept per slot (frame slot or blit) and reused only after that slot's fence wait, so draws still in flight on
+// either path are never overwritten. Honors dd->Textures requests (uploads recorded into cmd; textures ImGui destroys
+// are freed once every slot that drew them has been waited) and copies the vertices/indices into the slot's mapped
+// buffers.
+// Fails (prints) on another command buffer, a non-RGBA32 texture or an allocation failure.
+bool imgui_prepare(GpuDevice* dev, GpuSwapchain* sc, GpuImGui* im, VkCommandBuffer cmd, ImDrawData* dd);
 
 } // namespace vk13

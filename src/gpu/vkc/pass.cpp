@@ -26,9 +26,9 @@ bool draw(GpuPassCtx* ctx, const GpuDrawDesc& d) {
             (unsigned)d.pipeline->push.size);
     return false;
   }
-  if (!check_buffer(d.vertex_buffers[0], "vertex") || !check_buffer(d.index_buffer, "index")) return false;
-  if (d.vertex_buffers[1] && !check_buffer(d.vertex_buffers[1], "instance")) return false;
-  if (d.indirect && !check_buffer(d.indirect, "indirect")) return false;
+  if (!check_buffer(d.vertex_buffers[0], "vertex") || !check_buffer(d.index_buffer, "index")) { return false; }
+  if (d.vertex_buffers[1] && !check_buffer(d.vertex_buffers[1], "instance")) { return false; }
+  if (d.indirect && !check_buffer(d.indirect, "indirect")) { return false; }
 
   VkCommandBuffer cmd = ctx->cmd;
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, d.pipeline->h);
@@ -42,13 +42,15 @@ bool draw(GpuPassCtx* ctx, const GpuDrawDesc& d) {
   vkCmdBindVertexBuffers(cmd, 0, vb_count, vbs, offsets);
   vkCmdBindIndexBuffer(cmd, d.index_buffer->h, 0,
                        d.index_type == GpuIndexType::u16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
-  if (d.pipeline->push.size > 0)
+  if (d.pipeline->push.size > 0) {
     vkCmdPushConstants(cmd, d.pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        d.pipeline->push.size, d.push);
-  if (d.indirect)
+  }
+  if (d.indirect) {
     vkCmdDrawIndexedIndirect(cmd, d.indirect->h, 0, d.draw_count, sizeof(VkDrawIndexedIndirectCommand));
-  else
+  } else {
     vkCmdDrawIndexed(cmd, d.index_count, d.instance_count, 0, 0, 0);
+  }
   return true;
 }
 

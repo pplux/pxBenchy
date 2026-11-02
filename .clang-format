@@ -1,0 +1,11 @@
+# Run before every commit (CLAUDE.md, "Format"). InsertBraces: every if / else / for / while body in braces.
+BasedOnStyle: LLVM
+ColumnLimit: 120
+PointerAlignment: Left
+IndentCaseLabels: true
+InsertBraces: true
+SortIncludes: Never
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true

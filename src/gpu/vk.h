@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <volk.h>
@@ -43,30 +44,46 @@ struct State {
 };
 
 // Mode-neutral image layout. DEPTH is DEPTH_ATTACHMENT_OPTIMAL in vk13, DEPTH_STENCIL_ATTACHMENT_OPTIMAL in vk11.
-enum class Layout { UNDEFINED, GENERAL, COLOR_ATTACHMENT, DEPTH, SHADER_READ_ONLY, TRANSFER_SRC, TRANSFER_DST,
-                    PRESENT_SRC };
+enum class Layout {
+  UNDEFINED,
+  GENERAL,
+  COLOR_ATTACHMENT,
+  DEPTH,
+  SHADER_READ_ONLY,
+  TRANSFER_SRC,
+  TRANSFER_DST,
+  PRESENT_SRC
+};
 
 // Layout of an image state. All uses in one image state map to one layout; USE_NONE is UNDEFINED.
 Layout layout_of(uint32_t uses);
 
 } // namespace vkc
 
-namespace vk11 {
-struct Caches;
-}
+// Per-device state of the active mode (e.g. vk11's render pass + framebuffer caches); each mode derives its own and
+// downcasts. The mode destroys its Vulkan objects in its device_shutdown, before the device; the destructor frees
+// memory.
+struct GpuModeData {
+  virtual ~GpuModeData() = default;
+};
 
 struct GpuDevice {
   VkInstance instance = VK_NULL_HANDLE;
   VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
   VkPhysicalDevice physical = VK_NULL_HANDLE;
   VkPhysicalDeviceProperties props = {};
+  uint32_t api = 0; // instance apiVersion (the mode's version)
+  // VkPhysicalDeviceDriverProperties of physical (pNext cleared), queried when the effective version is 1.2+ or the
+  // device exposes VK_KHR_driver_properties (nothing is enabled for it); driver_props = false: not available, zeroed
+  bool driver_props = false;
+  VkPhysicalDeviceDriverProperties driver = {};
   VkDevice device = VK_NULL_HANDLE;
   uint32_t queue_family = 0;
   VkQueue queue = VK_NULL_HANDLE;
   VmaAllocator vma = nullptr;
   VkSurfaceKHR surface = VK_NULL_HANDLE;
   bool validation = false;
-  bool display_timing = false; // VK_GOOGLE_display_timing enabled (refresh period query)
+  bool display_timing = false;      // VK_GOOGLE_display_timing enabled (refresh period query)
   bool multi_draw_indirect = false; // multiDrawIndirect + drawIndirectFirstInstance enabled (indirect draw_count > 1)
   // Surface rotation the app applies itself (swapchain preTransform = currentTransform): fixed by the first swapchain
   // create, baked into every vertex shader's view_orientation()
@@ -78,7 +95,7 @@ struct GpuDevice {
   VkCommandPool tracy_pool = VK_NULL_HANDLE;
   VkCommandBuffer tracy_cmd = VK_NULL_HANDLE;
   TracyVkCtx tracy = nullptr;
-  vk11::Caches* vk11_caches = nullptr; // vk11 mode only: render pass + framebuffer caches (vk11/caches.h)
+  std::unique_ptr<GpuModeData> mode; // null when the mode has no per-device state
 };
 
 constexpr uint32_t PXB_FRAMES_IN_FLIGHT = 2;
@@ -134,8 +151,8 @@ struct GpuTextureDesc {
 
 struct GpuTexture {
   VkImage image = VK_NULL_HANDLE;
-  VkImageView view = VK_NULL_HANDLE;                  // all mips (sampling, attachments when 1 mip)
-  VkImageView mip_views[PXB_MAX_MIPS] = {};           // storage only: one view per mip
+  VkImageView view = VK_NULL_HANDLE;        // all mips (sampling, attachments when 1 mip)
+  VkImageView mip_views[PXB_MAX_MIPS] = {}; // storage only: one view per mip
   VmaAllocation alloc = nullptr;
   VkFormat format = VK_FORMAT_UNDEFINED;
   VkExtent2D extent = {};
@@ -162,12 +179,12 @@ struct GpuLayoutField {
 };
 
 struct GpuLayout {
-  std::string instance;                // GLSL instance name, e.g. "push"
-  std::vector<GpuLayoutField> fields;  // in layout order (size descending, then name ascending)
-  uint32_t size = 0;                   // bytes, rounded up to the block's max alignment; 0 = empty
+  std::string instance;               // GLSL instance name, e.g. "push"
+  std::vector<GpuLayoutField> fields; // in layout order (size descending, then name ascending)
+  uint32_t size = 0;                  // bytes, rounded up to the block's max alignment; 0 = empty
 };
 
-enum class GpuVertexFormat { float1, float2, float3, float4 };
+enum class GpuVertexFormat { float1, float2, float3, float4, unorm4 }; // unorm4: 4 x u8 read as vec4 in [0, 1]
 enum class GpuTopology { triangles, lines, points };
 enum class GpuCull { none, back, front };
 // alpha: color = src * SRC_ALPHA + dst * (1 - SRC_ALPHA), alpha = src + dst * (1 - SRC_ALPHA)
@@ -185,18 +202,18 @@ struct GpuBindingDecl {
 struct GpuPipelineDesc {
   const char* vs = nullptr; // GLSL sources (may carry their own #version, default 450)
   const char* fs = nullptr;
-  const char* cs = nullptr; // compute source: exclusive with vs/fs; declares its own local_size; push range COMPUTE
+  const char* cs = nullptr;   // compute source: exclusive with vs/fs; declares its own local_size; push range COMPUTE
   const char* vs_name = "vs"; // names used in compile errors
   const char* fs_name = "fs";
   const char* cs_name = "cs";
-  GpuLayout push;                                // prelude is injected into both shaders; range stages VERTEX|FRAGMENT
-  std::vector<GpuVertexFormat> vertex_layout;    // binding 0, per vertex, locations 0..n-1
-  std::vector<GpuVertexFormat> instance_layout;  // binding 1, per instance, locations n.. (empty = no binding)
-  std::vector<GpuBindingDecl> bindings;          // set 0, binding = index, stages ALL; prelude in both shaders
+  GpuLayout push;                               // prelude is injected into both shaders; range stages VERTEX|FRAGMENT
+  std::vector<GpuVertexFormat> vertex_layout;   // binding 0, per vertex, locations 0..n-1
+  std::vector<GpuVertexFormat> instance_layout; // binding 1, per instance, locations n.. (empty = no binding)
+  std::vector<GpuBindingDecl> bindings;         // set 0, binding = index, stages ALL; prelude in both shaders
   GpuTopology topology = GpuTopology::triangles;
   GpuCull cull = GpuCull::none; // front face is counter-clockwise
   GpuBlend blend = GpuBlend::none;
-  bool depth_test = false;      // compare LESS_OR_EQUAL
+  bool depth_test = false; // compare LESS_OR_EQUAL
   bool depth_write = false;
   VkFormat color_format = VK_FORMAT_UNDEFINED;
   VkFormat depth_format = VK_FORMAT_UNDEFINED; // UNDEFINED = no depth attachment (depth test/write must be off)
@@ -211,15 +228,33 @@ struct GpuPipeline {
   bool compute = false; // created from desc.cs (bind point COMPUTE); graphics otherwise
 };
 
-// Bitmap text (font8x8 basic, ASCII 0-127): one instanced draw per chunk of up to GPU_TEXT_CHUNK characters, the
-// characters packed 4 per uint in push constants. Zero-initialized value is valid (not initialized).
-constexpr uint32_t GPU_TEXT_CHUNK = 80; // 5 uvec4 push fields
+// ImGui renderer (vkc/imgui.h). Buffers are kept per slot: the PXB_FRAMES_IN_FLIGHT frame slots (frame command
+// buffer, reused after frame_begin waits its fence) plus the offscreen blit (blit command buffer, reused after
+// blit_begin waits its fence).
+constexpr uint32_t GPU_IMGUI_SLOTS = PXB_FRAMES_IN_FLIGHT + 1;
+constexpr uint32_t GPU_IMGUI_BLIT_SLOT = PXB_FRAMES_IN_FLIGHT;
+constexpr uint32_t GPU_IMGUI_MAX_TEXTURES = 8; // live + not yet freed ImGui textures (descriptor pool size)
 
-struct GpuText {
+// One ImTextureData on the GPU (RGBA8 UNORM, 1 mip). ImTextureData::TexID points to it.
+struct GpuImGuiTexture {
+  GpuTexture tex;
+  VkDescriptorSet set = VK_NULL_HANDLE; // texture binding of GpuImGui::pipe, from GpuImGui::pool
+  uint32_t used = 0;                    // bit per slot: drawn in that slot since the slot's fence was last waited
+  bool dead = false;                    // ImGui destroyed it; freed once used is 0
+};
+
+// Zero-initialized value is valid (not initialized).
+struct GpuImGui {
   GpuPipeline pipe;
-  GpuBuffer quad;  // unit quad, float2 x 4, mapped
-  GpuBuffer index; // u16 x 6, mapped
   VkFormat format = VK_FORMAT_UNDEFINED;
+  VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; // baked into pipe (scissor rotation)
+  VkDescriptorPool pool = VK_NULL_HANDLE;
+  std::vector<std::unique_ptr<GpuImGuiTexture>> textures;
+  GpuBuffer vertex[GPU_IMGUI_SLOTS];               // mapped, grown as needed
+  GpuBuffer index[GPU_IMGUI_SLOTS];                // mapped, grown as needed
+  std::vector<GpuBuffer> staging[GPU_IMGUI_SLOTS]; // texture uploads recorded in the slot, freed when it is reused
+  VkCommandBuffer prepared = VK_NULL_HANDLE;       // command buffer of the last imgui_prepare (imgui_draw must match)
+  uint32_t slot = 0;                               // its slot
 };
 
 constexpr VkFormat GPU_PASS_DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
@@ -268,30 +303,30 @@ struct GpuFrame {
 };
 
 struct GpuSwapchain {
-  VkSwapchainKHR swapchain = VK_NULL_HANDLE;   // VK_NULL_HANDLE while extent is zero (minimized)
+  VkSwapchainKHR swapchain = VK_NULL_HANDLE; // VK_NULL_HANDLE while extent is zero (minimized)
   VkSurfaceFormatKHR format = {};
   VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-  VkExtent2D extent = {};                      // image size, native orientation (rotated by 90/270 vs view_extent)
-  VkExtent2D view_extent = {};                 // size as the app sees it (scripts, text, HUD)
-  uint64_t refresh_ns = 0;                     // display refresh period (VK_GOOGLE_display_timing), 0 = unknown
+  VkExtent2D extent = {};      // image size, native orientation (rotated by 90/270 vs view_extent)
+  VkExtent2D view_extent = {}; // size as the app sees it (scripts, HUD)
+  uint64_t refresh_ns = 0;     // display refresh period (VK_GOOGLE_display_timing), 0 = unknown
   std::vector<VkImage> images;
   std::vector<VkImageView> views;
-  std::vector<vkc::State> image_states;         // per swapchain image, tracked by ensure_state
-  std::vector<VkSemaphore> render_finished;    // per swapchain image: submit -> present
+  std::vector<vkc::State> image_states;     // per swapchain image, tracked by ensure_state
+  std::vector<VkSemaphore> render_finished; // per swapchain image: submit -> present
   GpuFrame frames[PXB_FRAMES_IN_FLIGHT];
-  uint32_t frame = 0;                          // current frame slot
-  uint32_t image = 0;                          // image acquired by frame_begin / blit_begin
-  bool acquired = false;                       // a swapchain image is held (presented by frame end / blit end)
+  uint32_t frame = 0;    // current frame slot
+  uint32_t image = 0;    // image acquired by frame_begin / blit_begin
+  bool acquired = false; // a swapchain image is held (presented by frame end / blit end)
   // --offscreen: passes render into offscreen_tex (swapchain extent + format, recreated with the swapchain); frames
   // never acquire or present. capture copies the last submitted frame into capture, blit_* later copies capture
   // to the screen, both in their own submits. Set before the first swapchain_create.
   bool offscreen = false;
-  bool readable = false;                       // --screenshot: images get TRANSFER_SRC. Set before the first create
+  bool readable = false; // --screenshot: images get TRANSFER_SRC. Set before the first create
   GpuTexture offscreen_tex;
-  GpuTexture capture;                          // offscreen: frame waiting to be blitted (same extent + format)
-  GpuFrame blit;                               // offscreen capture + blit: own pool/cmd/fence/acquire semaphore
-  bool needs_recreate = false;                 // set on zero extent, OUT_OF_DATE or SUBOPTIMAL
-  bool submit_failed = false;                  // queue submit failed (OOM / device lost): fatal, no more frames
+  GpuTexture capture;          // offscreen: frame waiting to be blitted (same extent + format)
+  GpuFrame blit;               // offscreen capture + blit: own pool/cmd/fence/acquire semaphore
+  bool needs_recreate = false; // set on zero extent, OUT_OF_DATE or SUBOPTIMAL
+  bool submit_failed = false;  // queue submit failed (OOM / device lost): fatal, no more frames
   bool printed = false;
 };
 
@@ -305,10 +340,10 @@ struct GpuScreenshot {
 constexpr uint32_t PXB_TIMER_QUERIES = 256; // per frame slot; 2 used by the automatic frame timer
 
 struct GpuTimerOpen {
-  uint32_t id = 0;             // user timer index
+  uint32_t id = 0; // user timer index
   VkCommandBuffer cmd = VK_NULL_HANDLE;
-  uint32_t query = UINT32_MAX; // begin query, end = query + 1; UINT32_MAX when dropped (pool full)
-  void* zone = nullptr;        // tracy::VkCtxScope* (TRACY_ENABLE only)
+  uint32_t query = UINT32_MAX;             // begin query, end = query + 1; UINT32_MAX when dropped (pool full)
+  std::unique_ptr<tracy::VkCtxScope> zone; // set with TRACY_ENABLE only
 };
 
 struct GpuTimerRecord {
@@ -319,17 +354,17 @@ struct GpuTimerRecord {
 // User timer, created once by name; results accumulate by index.
 struct GpuUserTimer {
   std::string name;
-  std::vector<double> ns;     // per occurrence
-  const void* loc = nullptr;  // tracy::SourceLocationData* (TRACY_ENABLE only), never freed
+  std::vector<double> ns;    // per occurrence
+  const void* loc = nullptr; // tracy::SourceLocationData* (TRACY_ENABLE only), never freed
 };
 
 // Per frame slot. Query 0 = frame start, query 1 = frame end.
 struct GpuTimerSlot {
   VkQueryPool pool = VK_NULL_HANDLE;
   uint32_t used = 0;
-  uint64_t seq = 0;      // frame order
-  bool pending = false;  // recorded, not resolved yet
-  bool ended = false;    // frame_end hook ran
+  uint64_t seq = 0;            // frame order
+  bool pending = false;        // recorded, not resolved yet
+  bool ended = false;          // frame_end hook ran
   bool break_interval = false; // offscreen blit after this frame: the interval to the next frame is dropped
   bool overflow_printed = false;
   std::vector<GpuTimerRecord> records; // closed user timers
@@ -338,18 +373,18 @@ struct GpuTimerSlot {
 // Zero-initialized value is valid. Timers are no-ops (results empty) when timestamps are unsupported.
 struct GpuTimers {
   bool enabled = false;
-  TracyVkCtx tracy = nullptr;             // from the device, for the user timer zones
+  TracyVkCtx tracy = nullptr; // from the device, for the user timer zones
   double period_ns = 0.0;
   uint64_t mask = 0;
   GpuTimerSlot slots[PXB_FRAMES_IN_FLIGHT];
-  uint32_t cur = 0;                       // slot of the open frame
-  VkCommandBuffer cmd = VK_NULL_HANDLE;   // non-null between frame_begin and frame_end
+  uint32_t cur = 0;                     // slot of the open frame
+  VkCommandBuffer cmd = VK_NULL_HANDLE; // non-null between frame_begin and frame_end
   uint64_t next_seq = 1;
-  std::vector<GpuTimerOpen> open;         // LIFO
-  void* frame_zone = nullptr;             // tracy::VkCtxScope* `gpu_frame` over the frame cmd (TRACY_ENABLE only)
+  std::vector<GpuTimerOpen> open;                // LIFO
+  std::unique_ptr<tracy::VkCtxScope> frame_zone; // `gpu_frame` over the frame cmd (set with TRACY_ENABLE only)
   bool has_prev = false;
   uint64_t prev_start = 0;
-  std::vector<double> busy_ns;            // per frame, end - start
-  std::vector<double> interval_ns;        // per frame, start(n) - start(n-1)
-  std::vector<GpuUserTimer> user;         // creation order
+  std::vector<double> busy_ns;     // per frame, end - start
+  std::vector<double> interval_ns; // per frame, start(n) - start(n-1)
+  std::vector<GpuUserTimer> user;  // creation order
 };

@@ -12,8 +12,8 @@ struct TypeInfo {
 
 static const TypeInfo& type_info(GpuFieldType t) {
   static const TypeInfo infos[] = {
-    {"float", 4, 4, 1, false}, {"vec2", 8, 8, 2, false},  {"vec3", 12, 16, 3, false}, {"vec4", 16, 16, 4, false},
-    {"mat4", 64, 16, 16, false}, {"uint", 4, 4, 1, true}, {"uvec4", 16, 16, 4, true},
+      {"float", 4, 4, 1, false},   {"vec2", 8, 8, 2, false}, {"vec3", 12, 16, 3, false}, {"vec4", 16, 16, 4, false},
+      {"mat4", 64, 16, 16, false}, {"uint", 4, 4, 1, true},  {"uvec4", 16, 16, 4, true},
   };
   return infos[(int)t];
 }
@@ -29,9 +29,9 @@ static bool parse_type(const std::string& s, GpuFieldType* out) {
 }
 
 static bool valid_ident(const std::string& s) {
-  if (s.empty() || !(isalpha((unsigned char)s[0]) || s[0] == '_')) return false;
+  if (s.empty() || !(isalpha((unsigned char)s[0]) || s[0] == '_')) { return false; }
   for (char c : s) {
-    if (!(isalnum((unsigned char)c) || c == '_')) return false;
+    if (!(isalnum((unsigned char)c) || c == '_')) { return false; }
   }
   return true;
 }
@@ -86,7 +86,7 @@ bool layout_build(const char* instance, const std::vector<GpuFieldDecl>& decls, 
 }
 
 std::string layout_glsl(const GpuLayout& layout) {
-  if (layout.fields.empty()) return std::string();
+  if (layout.fields.empty()) { return std::string(); }
   std::string block = layout.instance;
   block[0] = (char)toupper((unsigned char)block[0]);
   std::string s = "layout(push_constant) uniform " + block + " {";
@@ -101,7 +101,7 @@ std::string layout_glsl(const GpuLayout& layout) {
 static bool pack(const GpuLayout& layout, const char* name, const void* values, uint32_t count, bool is_int,
                  void* block, std::string* error) {
   for (const GpuLayoutField& f : layout.fields) {
-    if (f.name != name) continue;
+    if (f.name != name) { continue; }
     const TypeInfo& ti = type_info(f.type);
     if (ti.is_int != is_int) {
       *error = std::string("field '") + name + "' is " + ti.glsl + " and needs " + (ti.is_int ? "integers" : "floats");
@@ -130,8 +130,9 @@ bool layout_pack_u32(const GpuLayout& layout, const char* name, const uint32_t* 
 }
 
 bool layout_field_is_int(const GpuLayout& layout, const char* name) {
-  for (const GpuLayoutField& f : layout.fields)
-    if (f.name == name) return type_info(f.type).is_int;
+  for (const GpuLayoutField& f : layout.fields) {
+    if (f.name == name) { return type_info(f.type).is_int; }
+  }
   return false;
 }
 
@@ -139,10 +140,11 @@ std::string bindings_glsl(const std::vector<GpuBindingDecl>& bindings) {
   std::string s;
   for (size_t i = 0; i < bindings.size(); i++) {
     std::string b = std::to_string(i);
-    if (bindings[i].kind == GpuBindingKind::texture)
+    if (bindings[i].kind == GpuBindingKind::texture) {
       s += "layout(set=0, binding=" + b + ") uniform sampler2D " + bindings[i].name + ";\n";
-    else
+    } else {
       s += "layout(set=0, binding=" + b + ", rgba8) uniform image2D " + bindings[i].name + ";\n";
+    }
   }
   return s;
 }
@@ -153,11 +155,12 @@ static VkFormat to_vk_format(GpuVertexFormat f) {
     case GpuVertexFormat::float2: return VK_FORMAT_R32G32_SFLOAT;
     case GpuVertexFormat::float3: return VK_FORMAT_R32G32B32_SFLOAT;
     case GpuVertexFormat::float4: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case GpuVertexFormat::unorm4: return VK_FORMAT_R8G8B8A8_UNORM;
   }
   return VK_FORMAT_UNDEFINED;
 }
 
-static uint32_t format_size(GpuVertexFormat f) { return ((uint32_t)f + 1) * 4; }
+static uint32_t format_size(GpuVertexFormat f) { return f == GpuVertexFormat::unorm4 ? 4 : ((uint32_t)f + 1) * 4; }
 
 // Appends one binding's attributes (sequential locations from *location) and returns its stride.
 static uint32_t add_attributes(const std::vector<GpuVertexFormat>& fmts, uint32_t binding, uint32_t* location,
@@ -172,9 +175,9 @@ static uint32_t add_attributes(const std::vector<GpuVertexFormat>& fmts, uint32_
 
 static VkShaderModule make_module(GpuDevice* dev, const std::vector<uint32_t>& spirv, std::string* error) {
   VkShaderModuleCreateInfo ci = {
-    .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-    .codeSize = spirv.size() * sizeof(uint32_t),
-    .pCode = spirv.data(),
+      .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+      .codeSize = spirv.size() * sizeof(uint32_t),
+      .pCode = spirv.data(),
   };
   VkShaderModule m = VK_NULL_HANDLE;
   VkResult r = vkCreateShaderModule(dev->device, &ci, nullptr, &m);
@@ -189,9 +192,13 @@ static VkShaderModule make_module(GpuDevice* dev, const std::vector<uint32_t>& s
 // Y down: ROTATE_90 = 90 degrees clockwise on screen). Every vertex shader must write gl_Position through it.
 static std::string view_orientation_glsl(VkSurfaceTransformFlagBitsKHR t) {
   const char* body = "p";
-  if (t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) body = "vec4(-p.y, p.x, p.z, p.w)";
-  else if (t == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR) body = "vec4(-p.x, -p.y, p.z, p.w)";
-  else if (t == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) body = "vec4(p.y, -p.x, p.z, p.w)";
+  if (t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) {
+    body = "vec4(-p.y, p.x, p.z, p.w)";
+  } else if (t == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR) {
+    body = "vec4(-p.x, -p.y, p.z, p.w)";
+  } else if (t == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
+    body = "vec4(p.y, -p.x, p.z, p.w)";
+  }
   return std::string("vec4 view_orientation(vec4 p) { return ") + body + "; }\n";
 }
 
@@ -221,17 +228,17 @@ static VkResult make_layouts(GpuDevice* dev, const GpuPipelineDesc& desc, VkShad
     std::vector<VkDescriptorSetLayoutBinding> lbs;
     for (size_t i = 0; i < desc.bindings.size(); i++) {
       lbs.push_back({
-        .binding = (uint32_t)i,
-        .descriptorType = desc.bindings[i].kind == GpuBindingKind::texture ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                                           : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_ALL,
+          .binding = (uint32_t)i,
+          .descriptorType = desc.bindings[i].kind == GpuBindingKind::texture ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                                             : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+          .descriptorCount = 1,
+          .stageFlags = VK_SHADER_STAGE_ALL,
       });
     }
     VkDescriptorSetLayoutCreateInfo sci = {
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-      .bindingCount = (uint32_t)lbs.size(),
-      .pBindings = lbs.data(),
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = (uint32_t)lbs.size(),
+        .pBindings = lbs.data(),
     };
     r = vkCreateDescriptorSetLayout(dev->device, &sci, nullptr, set_layout);
     if (r != VK_SUCCESS) {
@@ -241,11 +248,11 @@ static VkResult make_layouts(GpuDevice* dev, const GpuPipelineDesc& desc, VkShad
   }
   VkPushConstantRange range = {push_stages, 0, desc.push.size};
   VkPipelineLayoutCreateInfo lci = {
-    .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    .setLayoutCount = *set_layout ? 1u : 0u,
-    .pSetLayouts = set_layout,
-    .pushConstantRangeCount = desc.push.size > 0 ? 1u : 0u,
-    .pPushConstantRanges = &range,
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+      .setLayoutCount = *set_layout ? 1u : 0u,
+      .pSetLayouts = set_layout,
+      .pushConstantRangeCount = desc.push.size > 0 ? 1u : 0u,
+      .pPushConstantRanges = &range,
   };
   r = vkCreatePipelineLayout(dev->device, &lci, nullptr, layout);
   if (r != VK_SUCCESS) {
@@ -257,9 +264,9 @@ static VkResult make_layouts(GpuDevice* dev, const GpuPipelineDesc& desc, VkShad
 }
 
 void pipeline_destroy(GpuDevice* dev, GpuPipeline* pipe) {
-  if (pipe->h) vkDestroyPipeline(dev->device, pipe->h, nullptr);
-  if (pipe->layout) vkDestroyPipelineLayout(dev->device, pipe->layout, nullptr);
-  if (pipe->set_layout) vkDestroyDescriptorSetLayout(dev->device, pipe->set_layout, nullptr);
+  if (pipe->h) { vkDestroyPipeline(dev->device, pipe->h, nullptr); }
+  if (pipe->layout) { vkDestroyPipelineLayout(dev->device, pipe->layout, nullptr); }
+  if (pipe->set_layout) { vkDestroyDescriptorSetLayout(dev->device, pipe->set_layout, nullptr); }
   *pipe = GpuPipeline();
 }
 
@@ -273,13 +280,14 @@ bool compute_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget 
     *error = "cs cannot be combined with vs/fs";
     return false;
   }
-  if (!validate_bindings(desc.bindings, error)) return false;
+  if (!validate_bindings(desc.bindings, error)) { return false; }
   std::string prelude = layout_glsl(desc.push) + bindings_glsl(desc.bindings);
   std::vector<uint32_t> spv;
-  if (!shader_compile(target, GpuShaderStage::compute, desc.cs, desc.cs_name, prelude.c_str(), &spv, error))
+  if (!shader_compile(target, GpuShaderStage::compute, desc.cs, desc.cs_name, prelude.c_str(), &spv, error)) {
     return false;
+  }
   VkShaderModule mod = make_module(dev, spv, error);
-  if (!mod) return false;
+  if (!mod) { return false; }
 
   VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
   VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -288,20 +296,20 @@ bool compute_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget 
   VkResult r = make_layouts(dev, desc, VK_SHADER_STAGE_COMPUTE_BIT, &set_layout, &layout, &what);
   if (r == VK_SUCCESS) {
     VkComputePipelineCreateInfo ci = {
-      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-                .module = mod,
-                .pName = "main"},
-      .layout = layout,
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                  .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                  .module = mod,
+                  .pName = "main"},
+        .layout = layout,
     };
     r = vkCreateComputePipelines(dev->device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipeline);
-    if (r != VK_SUCCESS) what = "vkCreateComputePipelines";
+    if (r != VK_SUCCESS) { what = "vkCreateComputePipelines"; }
   }
   vkDestroyShaderModule(dev->device, mod, nullptr);
   if (r != VK_SUCCESS) {
-    if (layout) vkDestroyPipelineLayout(dev->device, layout, nullptr);
-    if (set_layout) vkDestroyDescriptorSetLayout(dev->device, set_layout, nullptr);
+    if (layout) { vkDestroyPipelineLayout(dev->device, layout, nullptr); }
+    if (set_layout) { vkDestroyDescriptorSetLayout(dev->device, set_layout, nullptr); }
     *error = std::string(what) + " failed (" + std::to_string((int)r) + ")";
     return false;
   }
@@ -314,8 +322,8 @@ bool compute_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget 
   return true;
 }
 
-bool graphics_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget target, const void* p_next,
-                       VkRenderPass render_pass, GpuPipeline* out, std::string* error) {
+bool graphics_pipeline_begin(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget target, GraphicsPipelineBuild* b,
+                             std::string* error) {
   if (!desc.vs || !desc.fs) {
     *error = "pipeline needs vs and fs sources";
     return false;
@@ -329,83 +337,90 @@ bool graphics_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget
     *error = "vertex shader must write gl_Position = view_orientation(clip_position)";
     return false;
   }
-  if (!validate_bindings(desc.bindings, error)) return false;
+  if (!validate_bindings(desc.bindings, error)) { return false; }
   std::string prelude = layout_glsl(desc.push) + bindings_glsl(desc.bindings);
   std::string vs_prelude = prelude + view_orientation_glsl(dev->transform);
   std::vector<uint32_t> vs_spv, fs_spv;
-  if (!shader_compile(target, GpuShaderStage::vertex, desc.vs, desc.vs_name, vs_prelude.c_str(), &vs_spv, error))
+  if (!shader_compile(target, GpuShaderStage::vertex, desc.vs, desc.vs_name, vs_prelude.c_str(), &vs_spv, error)) {
     return false;
+  }
   if (!shader_compile(target, GpuShaderStage::fragment, desc.fs, desc.fs_name, prelude.c_str(), &fs_spv, error)) {
     return false;
   }
 
-  VkShaderModule vs_mod = make_module(dev, vs_spv, error);
-  if (!vs_mod) return false;
-  VkShaderModule fs_mod = make_module(dev, fs_spv, error);
-  if (!fs_mod) {
-    vkDestroyShaderModule(dev->device, vs_mod, nullptr);
+  b->vs_mod = make_module(dev, vs_spv, error);
+  if (!b->vs_mod) { return false; }
+  b->fs_mod = make_module(dev, fs_spv, error);
+  if (!b->fs_mod) {
+    vkDestroyShaderModule(dev->device, b->vs_mod, nullptr);
+    b->vs_mod = VK_NULL_HANDLE;
     return false;
   }
 
-  VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-  VkPipelineLayout layout = VK_NULL_HANDLE;
-  VkPipeline pipeline = VK_NULL_HANDLE;
-  VkResult r = VK_SUCCESS;
   const char* what = "";
-  do {
-    r = make_layouts(dev, desc, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &set_layout, &layout,
-                     &what);
-    if (r != VK_SUCCESS) break;
+  VkResult r = make_layouts(dev, desc, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &b->set_layout,
+                            &b->layout, &what);
+  if (r != VK_SUCCESS) {
+    vkDestroyShaderModule(dev->device, b->vs_mod, nullptr);
+    vkDestroyShaderModule(dev->device, b->fs_mod, nullptr);
+    b->vs_mod = b->fs_mod = VK_NULL_HANDLE;
+    *error = std::string(what) + " failed (" + std::to_string((int)r) + ")";
+    return false;
+  }
 
-    std::vector<VkVertexInputBindingDescription> bindings;
-    std::vector<VkVertexInputAttributeDescription> attrs;
-    uint32_t location = 0;
-    uint32_t stride = add_attributes(desc.vertex_layout, 0, &location, &attrs);
-    if (!desc.vertex_layout.empty()) bindings.push_back({0, stride, VK_VERTEX_INPUT_RATE_VERTEX});
-    stride = add_attributes(desc.instance_layout, 1, &location, &attrs);
-    if (!desc.instance_layout.empty()) bindings.push_back({1, stride, VK_VERTEX_INPUT_RATE_INSTANCE});
-    VkPipelineVertexInputStateCreateInfo vi = {
+  uint32_t location = 0;
+  uint32_t stride = add_attributes(desc.vertex_layout, 0, &location, &b->attrs);
+  if (!desc.vertex_layout.empty()) { b->bindings.push_back({0, stride, VK_VERTEX_INPUT_RATE_VERTEX}); }
+  stride = add_attributes(desc.instance_layout, 1, &location, &b->attrs);
+  if (!desc.instance_layout.empty()) { b->bindings.push_back({1, stride, VK_VERTEX_INPUT_RATE_INSTANCE}); }
+  b->vi = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-      .vertexBindingDescriptionCount = (uint32_t)bindings.size(),
-      .pVertexBindingDescriptions = bindings.data(),
-      .vertexAttributeDescriptionCount = (uint32_t)attrs.size(),
-      .pVertexAttributeDescriptions = attrs.data(),
-    };
+      .vertexBindingDescriptionCount = (uint32_t)b->bindings.size(),
+      .pVertexBindingDescriptions = b->bindings.data(),
+      .vertexAttributeDescriptionCount = (uint32_t)b->attrs.size(),
+      .pVertexAttributeDescriptions = b->attrs.data(),
+  };
 
-    VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    if (desc.topology == GpuTopology::lines) topo = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    else if (desc.topology == GpuTopology::points) topo = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    VkPipelineInputAssemblyStateCreateInfo ia = {
+  VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  if (desc.topology == GpuTopology::lines) {
+    topo = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+  } else if (desc.topology == GpuTopology::points) {
+    topo = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+  }
+  b->ia = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
       .topology = topo,
-    };
-    VkPipelineViewportStateCreateInfo vp = {
+  };
+  b->vp = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
       .viewportCount = 1,
       .scissorCount = 1,
-    };
-    VkCullModeFlags cull = VK_CULL_MODE_NONE;
-    if (desc.cull == GpuCull::back) cull = VK_CULL_MODE_BACK_BIT;
-    else if (desc.cull == GpuCull::front) cull = VK_CULL_MODE_FRONT_BIT;
-    VkPipelineRasterizationStateCreateInfo rs = {
+  };
+  VkCullModeFlags cull = VK_CULL_MODE_NONE;
+  if (desc.cull == GpuCull::back) {
+    cull = VK_CULL_MODE_BACK_BIT;
+  } else if (desc.cull == GpuCull::front) {
+    cull = VK_CULL_MODE_FRONT_BIT;
+  }
+  b->rs = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
       .polygonMode = VK_POLYGON_MODE_FILL,
       .cullMode = cull,
       .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
       .lineWidth = 1.0f,
-    };
-    VkPipelineMultisampleStateCreateInfo ms = {
+  };
+  b->ms = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
       .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-    };
-    VkPipelineDepthStencilStateCreateInfo ds = {
+  };
+  b->ds = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
       .depthTestEnable = desc.depth_test ? VK_TRUE : VK_FALSE,
       .depthWriteEnable = desc.depth_write ? VK_TRUE : VK_FALSE,
       .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
-    };
-    bool alpha = desc.blend == GpuBlend::alpha;
-    VkPipelineColorBlendAttachmentState cba = {
+  };
+  bool alpha = desc.blend == GpuBlend::alpha;
+  b->cba = {
       .blendEnable = alpha ? VK_TRUE : VK_FALSE,
       .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
       .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
@@ -413,62 +428,60 @@ bool graphics_pipeline(GpuDevice* dev, const GpuPipelineDesc& desc, ShaderTarget
       .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
       .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
       .alphaBlendOp = VK_BLEND_OP_ADD,
-      .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                        VK_COLOR_COMPONENT_A_BIT,
-    };
-    VkPipelineColorBlendStateCreateInfo cb = {
+      .colorWriteMask =
+          VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+  };
+  b->cb = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
       .attachmentCount = 1,
-      .pAttachments = &cba,
-    };
-    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dy = {
+      .pAttachments = &b->cba,
+  };
+  b->dyn[0] = VK_DYNAMIC_STATE_VIEWPORT;
+  b->dyn[1] = VK_DYNAMIC_STATE_SCISSOR;
+  b->dy = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
       .dynamicStateCount = 2,
-      .pDynamicStates = dyn,
-    };
-    VkPipelineShaderStageCreateInfo stages[2] = {
-      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-       .stage = VK_SHADER_STAGE_VERTEX_BIT,
-       .module = vs_mod,
-       .pName = "main"},
-      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-       .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-       .module = fs_mod,
-       .pName = "main"},
-    };
-    VkGraphicsPipelineCreateInfo pci = {
+      .pDynamicStates = b->dyn,
+  };
+  b->stages[0] = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                  .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                  .module = b->vs_mod,
+                  .pName = "main"};
+  b->stages[1] = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                  .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                  .module = b->fs_mod,
+                  .pName = "main"};
+  b->info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-      .pNext = p_next,
       .stageCount = 2,
-      .pStages = stages,
-      .pVertexInputState = &vi,
-      .pInputAssemblyState = &ia,
-      .pViewportState = &vp,
-      .pRasterizationState = &rs,
-      .pMultisampleState = &ms,
-      .pDepthStencilState = has_depth ? &ds : nullptr,
-      .pColorBlendState = &cb,
-      .pDynamicState = &dy,
-      .layout = layout,
-      .renderPass = render_pass,
-    };
-    r = vkCreateGraphicsPipelines(dev->device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline);
-    if (r != VK_SUCCESS) what = "vkCreateGraphicsPipelines";
-  } while (false);
+      .pStages = b->stages,
+      .pVertexInputState = &b->vi,
+      .pInputAssemblyState = &b->ia,
+      .pViewportState = &b->vp,
+      .pRasterizationState = &b->rs,
+      .pMultisampleState = &b->ms,
+      .pDepthStencilState = has_depth ? &b->ds : nullptr,
+      .pColorBlendState = &b->cb,
+      .pDynamicState = &b->dy,
+      .layout = b->layout,
+  };
+  return true;
+}
 
-  vkDestroyShaderModule(dev->device, vs_mod, nullptr);
-  vkDestroyShaderModule(dev->device, fs_mod, nullptr);
+bool graphics_pipeline_end(GpuDevice* dev, const GpuPipelineDesc& desc, GraphicsPipelineBuild* b, VkResult r,
+                           VkPipeline pipeline, GpuPipeline* out, std::string* error) {
+  vkDestroyShaderModule(dev->device, b->vs_mod, nullptr);
+  vkDestroyShaderModule(dev->device, b->fs_mod, nullptr);
   if (r != VK_SUCCESS) {
-    if (layout) vkDestroyPipelineLayout(dev->device, layout, nullptr);
-    if (set_layout) vkDestroyDescriptorSetLayout(dev->device, set_layout, nullptr);
-    *error = std::string(what) + " failed (" + std::to_string((int)r) + ")";
+    if (b->layout) { vkDestroyPipelineLayout(dev->device, b->layout, nullptr); }
+    if (b->set_layout) { vkDestroyDescriptorSetLayout(dev->device, b->set_layout, nullptr); }
+    *error = "vkCreateGraphicsPipelines failed (" + std::to_string((int)r) + ")";
     return false;
   }
   out->h = pipeline;
-  out->layout = layout;
+  out->layout = b->layout;
   out->push = desc.push;
-  out->set_layout = set_layout;
+  out->set_layout = b->set_layout;
   out->bindings = desc.bindings;
   return true;
 }

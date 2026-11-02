@@ -97,7 +97,6 @@ for frame = 1, pxb.args.frames_warmup + pxb.args.frames do
     gpu.draw{pipeline = show, vertex_buffers = {vb}, index_buffer = ib, index_type = "u16", count = 6,
       bind = {tex = tex}, push = {rect = r.rect, lod = r.lod}}
   end
-  gpu.text(8, 8, "mips: compute", {scale = 2, color = {1, 1, 0, 1}, bg = {0, 0, 0, 0.6}})
   gpu.end_pass()
   gpu.present()
 end

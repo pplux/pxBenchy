@@ -13,8 +13,9 @@ bool pass_begin(GpuDevice* dev, GpuSwapchain* sc, GpuPassCtx* ctx, VkCommandBuff
                      ctx->depth.extent.height != sc->extent.height)) {
     texture_destroy(dev, &ctx->depth); // vk11's: forgets the framebuffers on its view
     if (!texture_create(dev, {sc->extent.width, sc->extent.height, GPU_PASS_DEPTH_FORMAT, GpuTextureKind::depth},
-                        &ctx->depth))
+                        &ctx->depth)) {
       return false;
+    }
   }
   bool offscreen = sc->offscreen && !desc.swapchain;
   if (!offscreen && !sc->acquired) {
@@ -26,15 +27,21 @@ bool pass_begin(GpuDevice* dev, GpuSwapchain* sc, GpuPassCtx* ctx, VkCommandBuff
   VkFormat color_format = offscreen ? sc->offscreen_tex.format : sc->format.format;
   VkRenderPass rp = render_pass(dev, color_format, desc.depth ? GPU_PASS_DEPTH_FORMAT : VK_FORMAT_UNDEFINED,
                                 desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD);
-  if (rp == VK_NULL_HANDLE) return false; // render_pass printed
+  if (rp == VK_NULL_HANDLE) {
+    return false; // render_pass printed
+  }
   VkFramebuffer fb = framebuffer(dev, rp, color_view, desc.depth ? ctx->depth.view : VK_NULL_HANDLE, sc->extent);
-  if (fb == VK_NULL_HANDLE) return false; // framebuffer printed
+  if (fb == VK_NULL_HANDLE) {
+    return false; // framebuffer printed
+  }
 
   vkc::State* state = offscreen ? &sc->offscreen_tex.state[0] : &sc->image_states[sc->image];
   uint32_t color_uses = vkc::COLOR_ATTACH_WRITE;
-  if (!desc.clear) color_uses |= vkc::COLOR_ATTACH_READ; // LOAD reads the image
+  if (!desc.clear) {
+    color_uses |= vkc::COLOR_ATTACH_READ; // LOAD reads the image
+  }
   ensure_state(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, state, {color_uses});
-  if (desc.depth) ensure_state(cmd, &ctx->depth, {vkc::DEPTH_ATTACH});
+  if (desc.depth) { ensure_state(cmd, &ctx->depth, {vkc::DEPTH_ATTACH}); }
 
   VkClearValue clear[2] = {};
   clear[0].color = {{desc.clear_color[0], desc.clear_color[1], desc.clear_color[2], desc.clear_color[3]}};
