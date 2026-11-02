@@ -43,6 +43,10 @@ the display density.
   JSON as plain text (files over 500 KB are shared as a file instead); Copy puts the JSON on the clipboard (over
   500 KB: refused, use Share). macOS: Share reveals the file in Finder; Share as text and Copy copy the JSON to the
   pasteboard. The status line shows the outcome (`Copied 3.2 KB`, `share sheet opened`, or the error).
+- Update check (Android): at start, the latest GitHub release (`api.github.com/repos/pplux/pxBenchy/releases/latest`)
+  `tag_name` (`vX.Y.Z` or `X.Y.Z`) is compared with the build's version; a newer one shows `pxBenchy <tag> available`
+  with a Download button that opens the latest release page in the browser. The outcome is printed (`update: ...`); a
+  failed check (offline, no releases) shows nothing.
 - During a run only the HUD is drawn. Back (Android) or Escape (macOS) stops the run and returns to the menu; in the
   menu it exits the app. The run's report is also printed (stdout / logcat), as on the command line.
 
@@ -72,18 +76,33 @@ Without `--es args` (or from the launcher) the app opens the menu. Or in one ste
 last line (`exit code: N`) and exits with that code.
 
 `android/build_apk.sh [--release | --release-tracy]` configures the build dir when missing (arm64-v8a, android-31), builds it,
-and packs the `.so`, scripts and assets into an APK signed with the debug keystore. Three variants, same package id
+and packs the `.so`, scripts and assets into a signed APK (see Signing). Three variants, same package id
 (installing one replaces the other):
 
 - debug (default): `build-android-debug/pxbenchy.apk`, RelWithDebInfo (validation, Tracy), bundled validation
   layer, debuggable
-- `--release`: `build-android-release/pxbenchy.apk`, Release (no `--validation`, no validation toggle in the menu, no
-  Tracy), no validation layer, not debuggable, no INTERNET permission. The one to publish
-- `--release-tracy`: `build-android-release-tracy/pxbenchy.apk`, as `--release` plus Tracy (INTERNET for its socket)
+- `--release`: `build-android-release/pxbenchy-<version>.apk` (the name to attach to the GitHub release), Release (no `--validation`, no validation toggle in the menu, no
+  Tracy), no validation layer, not debuggable. The one to publish
+- `--release-tracy`: `build-android-release-tracy/pxbenchy.apk`, as `--release` plus Tracy
 
 The APK's versionName / versionCode come from `project(pxbenchy VERSION x.y.z)` in `CMakeLists.txt` (versionCode
-= major*10000 + minor*100 + patch): bump it for each published release. The startup line shows the build's git hash (`git=...`, also on
-the HUD) to confirm what is installed. Tracy needs `adb forward tcp:8086 tcp:8086`.
+= major*10000 + minor*100 + patch): bump it for each published release. `build_apk.sh` prints `version: x.y.z (versionCode N), release tag vx.y.z` before the APK path. The startup line shows the build's git hash (`git=...`, also on
+the HUD) to confirm what is installed. Tracy needs `adb forward tcp:8086 tcp:8086`. INTERNET is always requested
+(update check, Tracy's socket).
+
+Signing: Android installs an update only over an APK signed with the same key. Unset, `build_apk.sh` uses
+`~/.android/debug.keystore` (created when missing; differs per machine). For published APKs use one permanent
+keystore, kept outside the repo:
+
+```
+keytool -genkeypair -keystore pxbenchy-release.p12 -storetype PKCS12 -alias pxbenchy -keyalg RSA -keysize 4096 \
+  -validity 10000 -dname "CN=pxBenchy"
+PXB_KEYSTORE=/path/pxbenchy-release.p12 PXB_KEYSTORE_PASS=... android/build_apk.sh --release
+```
+
+`PXB_KEYSTORE` (path) enables it and needs `PXB_KEYSTORE_PASS` (keystore password, also the key's: PKCS12 uses one);
+`PXB_KEY_ALIAS` only when the keystore holds several keys. `build_apk.sh` prints `signing with: <keystore>`.
+Losing the keystore means users must uninstall to move to APKs signed with a new one.
 
 ## Report
 

@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Configure the build dir if needed (arm64-v8a, android-31), build it, and package libpxbenchy.so into an APK signed
-# with the debug keystore (no Gradle). Output: <build dir>/pxbenchy.apk (its path is the last stdout line).
+# with PXB_KEYSTORE when set, else the debug keystore (no Gradle). Output: <build dir>/pxbenchy.apk, or
+# pxbenchy-<version>.apk with --release (the name to upload); its path is the last stdout line.
 # Usage: android/build_apk.sh [--release | --release-tracy]
 #   debug (default):  build-android-debug, RelWithDebInfo (validation, Tracy), bundled validation layer, debuggable
 #   --release:        build-android-release, Release (no validation, no Tracy), no validation layer, not debuggable
 #   --release-tracy:  build-android-release-tracy, as --release plus Tracy
-# INTERNET (Tracy's socket) only when the build dir has PXB_TRACY on.
+# Signing: PXB_KEYSTORE (keystore path), PXB_KEYSTORE_PASS (its password, also used as the key password),
+# PXB_KEY_ALIAS (optional, needed only when the keystore holds several keys). Unset: ~/.android/debug.keystore.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE=1
+NAMED=0 # --release: version in the APK name
 CONFIG=()
 if [[ $# == 0 ]]; then
   RELEASE=0
@@ -18,6 +21,7 @@ if [[ $# == 0 ]]; then
 elif [[ $# == 1 && "$1" == "--release" ]]; then
   BUILD="$ROOT/build-android-release"
   CONFIG=(-DCMAKE_BUILD_TYPE=Release)
+  NAMED=1
 elif [[ $# == 1 && "$1" == "--release-tracy" ]]; then
   BUILD="$ROOT/build-android-release-tracy"
   CONFIG=(-DCMAKE_BUILD_TYPE=Release -DPXB_TRACY=ON)
@@ -65,6 +69,16 @@ VVL="$ROOT/deps/vvl-android/arm64-v8a/libVkLayer_khronos_validation.so"
 
 die() { echo "error: $*" >&2; exit 1; }
 
+SIGN=(--ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey)
+if [[ -n "${PXB_KEYSTORE:-}" ]]; then
+  [[ -f "$PXB_KEYSTORE" ]] || die "PXB_KEYSTORE=$PXB_KEYSTORE not found"
+  [[ -n "${PXB_KEYSTORE_PASS:-}" ]] || die "PXB_KEYSTORE is set, PXB_KEYSTORE_PASS is not"
+  KEYSTORE="$PXB_KEYSTORE"
+  SIGN=(--ks-pass env:PXB_KEYSTORE_PASS)
+  if [[ -n "${PXB_KEY_ALIAS:-}" ]]; then SIGN+=(--ks-key-alias "$PXB_KEY_ALIAS"); fi
+fi
+echo "signing with: $KEYSTORE" >&2
+
 TOOLCHAIN="$NDK/build/cmake/android.toolchain.cmake"
 
 for f in "$BT/aapt2" "$BT/zipalign" "$BT/apksigner" "$ANDROID_JAR" "$STRIP" "$TOOLCHAIN"; do
@@ -100,26 +114,23 @@ if [[ ! -f "$KEYSTORE" ]]; then
     -dname "CN=Android Debug,O=Android,C=US"
 fi
 
+# versionCode / versionName from project(VERSION) in CMakeLists.txt
+read -r VERSION_CODE VERSION_NAME <"$BUILD/android_version.txt"
+if [[ $NAMED == 1 ]]; then APK="$BUILD/pxbenchy-$VERSION_NAME.apk"; fi
+
 rm -rf "$STAGE" "$APK"
 mkdir -p "$STAGE/assets" "$STAGE/lib/arm64-v8a"
 cp -R "$ROOT/assets" "$STAGE/assets/assets"
 cp -R "$ROOT/scripts" "$STAGE/assets/scripts"
 cp "$SO" "$STAGE/lib/arm64-v8a/libpxbenchy.so"
 "$STRIP" --strip-unneeded "$STAGE/lib/arm64-v8a/libpxbenchy.so"
-# debug: validation layer bundled, debuggable so the loader finds it. No Tracy: no INTERNET (only Tracy uses it)
+# debug: validation layer bundled, debuggable so the loader finds it
 MANIFEST="$ROOT/android/AndroidManifest.xml"
 LINK=()
 if [[ $RELEASE == 0 ]]; then
   cp "$VVL" "$STAGE/lib/arm64-v8a/"
   LINK=(--debug-mode)
 fi
-if ! grep -qx 'PXB_TRACY:BOOL=ON' "$BUILD/CMakeCache.txt"; then
-  grep -v 'android.permission.INTERNET' "$MANIFEST" >"$STAGE/AndroidManifest.xml"
-  MANIFEST="$STAGE/AndroidManifest.xml"
-fi
-
-# versionCode / versionName from project(VERSION) in CMakeLists.txt
-read -r VERSION_CODE VERSION_NAME <"$BUILD/android_version.txt"
 
 "$BT/aapt2" link -o "$STAGE/base.apk" --manifest "$MANIFEST" \
   -I "$ANDROID_JAR" -A "$STAGE/assets" --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
@@ -128,7 +139,7 @@ read -r VERSION_CODE VERSION_NAME <"$BUILD/android_version.txt"
 
 # zipalign before apksigner (v2+ signing). -p page-aligns stored .so files.
 "$BT/zipalign" -f -p 4 "$STAGE/base.apk" "$STAGE/aligned.apk"
-"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-  --ks-key-alias androiddebugkey --out "$APK" "$STAGE/aligned.apk"
+"$BT/apksigner" sign --ks "$KEYSTORE" "${SIGN[@]}" --out "$APK" "$STAGE/aligned.apk"
 
+echo "version: $VERSION_NAME (versionCode $VERSION_CODE), release tag v$VERSION_NAME" >&2
 echo "$APK"

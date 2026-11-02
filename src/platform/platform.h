@@ -44,6 +44,13 @@ bool platform_share_file(const std::string& where, std::string* msg);
 bool platform_share_text(const std::string& text, std::string* msg);
 bool platform_copy_text(const std::string& text, std::string* msg);
 
+// Update check (menu). http_get: HTTPS GET, blocking, any thread; true on HTTP 200 with *body = the response (at most
+// PXB_HTTP_BODY_MAX bytes), else false with *err = the reason. open_url: url in the browser, main thread; *msg = status
+// or reason. Android: java.net.HttpURLConnection (5 s timeouts) / ACTION_VIEW, over JNI | macOS: not supported (false).
+constexpr size_t PXB_HTTP_BODY_MAX = 1024 * 1024;
+bool platform_http_get(const std::string& url, std::string* body, std::string* err);
+bool platform_open_url(const std::string& url, std::string* msg);
+
 // UI scale from the display density: Android AConfiguration_getDensity / 160 | macOS window backingScaleFactor.
 float platform_ui_scale();
 

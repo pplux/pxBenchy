@@ -312,6 +312,16 @@ bool platform_share_text(const std::string& text, std::string* msg) {
   return true;
 }
 
+bool platform_http_get(const std::string&, std::string*, std::string* err) {
+  *err = "not supported on macOS";
+  return false;
+}
+
+bool platform_open_url(const std::string&, std::string* msg) {
+  *msg = "not supported on macOS";
+  return false;
+}
+
 float platform_ui_scale() { return g_window ? (float)g_window.backingScaleFactor : 1.0f; }
 
 PlatformInsets platform_safe_insets() { return PlatformInsets{}; } // window content area: nothing covers it

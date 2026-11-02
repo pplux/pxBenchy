@@ -590,6 +590,120 @@ bool platform_copy_text(const std::string& text, std::string* msg) {
   return ok;
 }
 
+// new URL(url).openConnection() as HttpURLConnection, GET, body read in 16 KB chunks. Network errors are exceptions
+// (described to logcat by jni_failed). Plain Java calls: fine on any attached thread, but not the Java main thread
+// (NetworkOnMainThreadException), which this never runs on.
+static bool http_get_jni(JNIEnv* env, const std::string& url, std::string* body, std::string* err) {
+  *err = "jni failed (see log)";
+  jclass url_cls = jni_class(env, "java/net/URL");
+  jclass conn_cls = url_cls ? jni_class(env, "java/net/HttpURLConnection") : nullptr;
+  jclass is_cls = conn_cls ? jni_class(env, "java/io/InputStream") : nullptr;
+  if (!is_cls) { return false; }
+  jmethodID url_init = jni_method(env, url_cls, "<init>", "(Ljava/lang/String;)V");
+  jmethodID open = jni_method(env, url_cls, "openConnection", "()Ljava/net/URLConnection;");
+  jmethodID set_connect = jni_method(env, conn_cls, "setConnectTimeout", "(I)V");
+  jmethodID set_read = jni_method(env, conn_cls, "setReadTimeout", "(I)V");
+  jmethodID set_prop = jni_method(env, conn_cls, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
+  jmethodID get_code = jni_method(env, conn_cls, "getResponseCode", "()I");
+  jmethodID get_is = jni_method(env, conn_cls, "getInputStream", "()Ljava/io/InputStream;");
+  jmethodID disconnect = jni_method(env, conn_cls, "disconnect", "()V");
+  jmethodID read = jni_method(env, is_cls, "read", "([B)I");
+  jmethodID close = jni_method(env, is_cls, "close", "()V");
+  if (!url_init || !open || !set_connect || !set_read || !set_prop || !get_code || !get_is || !disconnect || !read ||
+      !close) {
+    return false;
+  }
+  jstring j_url = env->NewStringUTF(url.c_str()); // URL: ASCII
+  jstring j_ua_key = j_url ? env->NewStringUTF("User-Agent") : nullptr;
+  jstring j_ua = j_ua_key ? env->NewStringUTF("pxBenchy") : nullptr; // GitHub's API rejects requests without one
+  if (jni_failed(env, "NewStringUTF") || !j_ua) { return false; }
+  jobject u = env->NewObject(url_cls, url_init, j_url);
+  if (jni_failed(env, "URL()") || !u) { return false; }
+  jobject conn = env->CallObjectMethod(u, open);
+  if (jni_failed(env, "URL.openConnection") || !conn) { return false; }
+  if (!env->IsInstanceOf(conn, conn_cls)) {
+    *err = "not an http(s) URL";
+    return false;
+  }
+
+  // From here on every path disconnects.
+  bool ok = false;
+  env->CallVoidMethod(conn, set_connect, (jint)5000);
+  bool setup = !jni_failed(env, "setConnectTimeout");
+  if (setup) { env->CallVoidMethod(conn, set_read, (jint)5000); }
+  setup = setup && !jni_failed(env, "setReadTimeout");
+  if (setup) { env->CallVoidMethod(conn, set_prop, j_ua_key, j_ua); }
+  setup = setup && !jni_failed(env, "setRequestProperty");
+  jint code = setup ? env->CallIntMethod(conn, get_code) : 0;
+  if (setup && jni_failed(env, "getResponseCode")) {
+    *err = "network error (see log)";
+  } else if (setup && code != 200) {
+    *err = "HTTP " + std::to_string((int)code);
+  } else if (setup) {
+    jobject is = env->CallObjectMethod(conn, get_is);
+    jbyteArray buf = !jni_failed(env, "getInputStream") && is ? env->NewByteArray(16 * 1024) : nullptr;
+    if (!jni_failed(env, "NewByteArray") && buf) {
+      body->clear();
+      for (;;) {
+        jint n = env->CallIntMethod(is, read, buf);
+        if (jni_failed(env, "InputStream.read")) {
+          *err = "network error (see log)";
+          break;
+        }
+        if (n < 0) {
+          ok = true;
+          break;
+        }
+        if (body->size() + (size_t)n > PXB_HTTP_BODY_MAX) {
+          *err = "response too large";
+          break;
+        }
+        size_t at = body->size();
+        body->resize(at + (size_t)n);
+        env->GetByteArrayRegion(buf, 0, n, (jbyte*)body->data() + at);
+      }
+    }
+    if (is) {
+      env->CallVoidMethod(is, close);
+      jni_failed(env, "InputStream.close");
+    }
+  }
+  env->CallVoidMethod(conn, disconnect);
+  jni_failed(env, "disconnect");
+  return ok;
+}
+
+bool platform_http_get(const std::string& url, std::string* body, std::string* err) {
+  return with_jni([&](JNIEnv* env, jobject) { return http_get_jni(env, url, body, err); });
+}
+
+// startActivity(new Intent(ACTION_VIEW, Uri.parse(url))): the browser (or the app that handles the URL).
+static bool open_url_jni(JNIEnv* env, jobject activity, const std::string& url) {
+  jclass intent_cls = jni_class(env, "android/content/Intent");
+  jclass uri_cls = intent_cls ? jni_class(env, "android/net/Uri") : nullptr;
+  if (!uri_cls) { return false; }
+  jmethodID init = jni_method(env, intent_cls, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V");
+  jmethodID start = jni_method(env, env->GetObjectClass(activity), "startActivity", "(Landroid/content/Intent;)V");
+  jmethodID parse = env->GetStaticMethodID(uri_cls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+  if (jni_failed(env, "Uri.parse")) { parse = nullptr; }
+  if (!init || !start || !parse) { return false; }
+  jstring j_action = env->NewStringUTF("android.intent.action.VIEW"); // Intent.ACTION_VIEW
+  jstring j_url = j_action ? env->NewStringUTF(url.c_str()) : nullptr;
+  if (jni_failed(env, "NewStringUTF") || !j_url) { return false; }
+  jobject j_uri = env->CallStaticObjectMethod(uri_cls, parse, j_url);
+  if (jni_failed(env, "Uri.parse") || !j_uri) { return false; }
+  jobject intent = env->NewObject(intent_cls, init, j_action, j_uri);
+  if (jni_failed(env, "Intent()") || !intent) { return false; }
+  env->CallVoidMethod(activity, start, intent);
+  return !jni_failed(env, "startActivity");
+}
+
+bool platform_open_url(const std::string& url, std::string* msg) {
+  bool ok = with_jni([&](JNIEnv* env, jobject act) { return open_url_jni(env, act, url); });
+  *msg = ok ? "browser opened" : "open failed (see log)";
+  return ok;
+}
+
 float platform_ui_scale() {
   int32_t dpi = s_app->config ? AConfiguration_getDensity(s_app->config) : 0; // glue refreshes config on changes
   return dpi > 0 && dpi != ACONFIGURATION_DENSITY_ANY && dpi != ACONFIGURATION_DENSITY_NONE ? dpi / 160.0f : 1.0f;
