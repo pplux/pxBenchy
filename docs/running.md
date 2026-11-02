@@ -18,7 +18,7 @@ Without a script the app opens the menu (below); `--vulkan`, `--validation`,
 | `--frames-warmup N` | 60 | frames before timers are cleared (`pxb.args.frames_warmup`) |
 | `--time-limit S` | 0 (off) | end the run normally (with the report) after S seconds of measured frames (after warm-up); the report says `time limit: S s reached`. Script runs only: the menu has its own setting |
 | `--no-hud` | HUD on | no on-screen stats |
-| `--offscreen` | off | render to an own image, no vsync; about once per second the last frame is copied to the screen |
+| `--offscreen` | off | render to an own image, no vsync; about once per second the last frame is copied to the screen. The intervals spanning a copy and the frame right after it are left out of the timer stats (on Android the compositor's work on the new image slows that frame: Pixel 9 +20 ms); fps still includes them |
 | `--json` | off | print the report as one JSON line |
 | `--screenshot file.png` | off | save frame `--screenshot-frame` as an RGBA8 PNG (scene only, no HUD, view orientation), print `screenshot: path (frame N, WxH)` and exit 0 without a report; error (exit 1) if the script ends first. Android: use an app-writable absolute path |
 | `--screenshot-frame N` | 1 | 1-based frame (HUD frame number) to capture; a skipped frame moves it to the next one drawn |
@@ -127,7 +127,14 @@ At the end of the run, one row per timer, gpu rows first, then cpu, by name:
 - `offscreen presents` (with `--offscreen`), `time limit: S s reached` (when `--time-limit` ended the run), and the thermal headroom at the start and end of the measured frames
   (Android: 1.0 = severe throttling; 0 where unsupported).
 
-Tracy also shows thermal plots (headroom, status, battery temperature) sampled once per second.
+The HUD shows the thermal headroom, status and battery temperature. Headroom (Android, `AThermal_getThermalHeadroom`):
+0 = no throttling, 1.0 = severe throttling, above 1 beyond it. Status, as a word on the HUD and as its number in
+Tracy's `thermal status` plot: Android 0 none, 1 light, 2 moderate, 3 severe, 4 critical, 5 emergency, 6 shutdown
+(`AThermalStatus`); macOS 0 nominal, 1 fair, 2 serious, 3 critical (`NSProcessInfo.thermalState`).
+
+Tracy also shows thermal plots (headroom, status, battery temperature) and, on Android, the clocks (`gpu MHz`,
+`cpu0 MHz`.. one per CPU cluster, little cores first; read from sysfs only in Tracy builds, missing when the device
+does not allow it) sampled once per second.
 
 ### JSON report
 

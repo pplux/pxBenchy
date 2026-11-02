@@ -328,6 +328,12 @@ float platform_ui_scale() { return g_window ? (float)g_window.backingScaleFactor
 
 PlatformInsets platform_safe_insets() { return PlatformInsets{}; } // window content area: nothing covers it
 
+const char* platform_thermal_status_name(float status) {
+  static const char* const names[] = {"nominal", "fair", "serious", "critical"};
+  int i = (int)status;
+  return i >= 0 && i < 4 ? names[i] : "?";
+}
+
 void platform_thermal(PlatformThermal* out) {
   *out = PlatformThermal{};
   out->status = (float)[NSProcessInfo processInfo].thermalState; // nominal 0 .. critical 3

@@ -45,6 +45,7 @@ struct GpuLua {
   long long offscreen_presents = 0; // offscreen: blits since the warm-up reset
   float headroom_start = 0.0f;      // thermal headroom when measuring starts (warm-up reset, or init without warm-up)
   int blit_in = 0;                  // offscreen: presents until the captured frame is blitted (0 = no capture pending)
+  int since_copy = -1;              // offscreen: presents since the last copy to the screen (-1 = none pending)
   long long presents = 0;
   int64_t measure_start_ns = 0;         // wall time when measuring began (warm-up reset, or init without warm-up)
   long long measure_start_presents = 0; // presents at that point

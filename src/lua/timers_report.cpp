@@ -32,6 +32,19 @@ void timer_set_clear(TimerSet* ts) {
   ts->skip_next = false;
 }
 
+std::string timer_set_close_open(TimerSet* ts) {
+  std::string names;
+  for (size_t i = 0; i < ts->open.size(); i++) {
+    if (i) { names += ", "; }
+    names += ts->cpu[ts->open[i].id].name;
+  }
+#ifdef TRACY_ENABLE
+  for (size_t i = ts->open.size(); i-- > 0;) { ___tracy_emit_zone_end(ts->open[i].zone); }
+#endif
+  ts->open.clear();
+  return names;
+}
+
 // Nearest rank on sorted samples: index ceil(p/100 * n) - 1.
 static double pct(const std::vector<double>& s, size_t p) { return s[(p * s.size() + 99) / 100 - 1]; }
 

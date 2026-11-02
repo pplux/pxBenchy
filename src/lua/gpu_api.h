@@ -52,6 +52,7 @@ enum class GpuApi { vk11, vk13 };
   X(timers_frame_begin)                                                                                                \
   X(timers_frame_end)                                                                                                  \
   X(timers_break_interval)                                                                                             \
+  X(timers_drop_frame)                                                                                                 \
   X(timers_resolve_all)                                                                                                \
   X(timers_clear)                                                                                                      \
   X(timer_create)                                                                                                      \

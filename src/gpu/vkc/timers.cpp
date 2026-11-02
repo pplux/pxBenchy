@@ -48,6 +48,13 @@ void timers_break_interval(GpuTimers* t) {
   if (t->enabled && !t->cmd && t->slots[t->cur].ended) { t->slots[t->cur].break_interval = true; }
 }
 
+void timers_drop_frame(GpuTimers* t) {
+  if (t->enabled && !t->cmd && t->slots[t->cur].ended) {
+    t->slots[t->cur].drop = true;
+    t->slots[t->cur].break_interval = true;
+  }
+}
+
 void timers_resolve_all(GpuDevice* dev, GpuTimers* t) {
   if (!t->enabled) { return; }
   GpuTimerSlot* order[PXB_FRAMES_IN_FLIGHT];
@@ -97,6 +104,8 @@ namespace vkc::part {
 void timers_resolve_slot(GpuDevice* dev, GpuTimers* t, GpuTimerSlot* s) {
   if (!s->pending) { return; }
   s->pending = false;
+  bool drop = s->drop;
+  s->drop = false;
   if (!s->ended) { return; }
   uint64_t d[2 * PXB_TIMER_QUERIES]; // value, availability
   VkResult r =
@@ -107,7 +116,7 @@ void timers_resolve_slot(GpuDevice* dev, GpuTimers* t, GpuTimerSlot* s) {
     return;
   }
   if (d[1]) { // frame start available
-    if (d[3]) { t->busy_ns.push_back(to_ns(t, d[0], d[2])); }
+    if (d[3] && !drop) { t->busy_ns.push_back(to_ns(t, d[0], d[2])); }
     if (t->has_prev) { t->interval_ns.push_back(to_ns(t, t->prev_start, d[0])); }
     t->has_prev = !s->break_interval;
     t->prev_start = d[0];
@@ -115,7 +124,7 @@ void timers_resolve_slot(GpuDevice* dev, GpuTimers* t, GpuTimerSlot* s) {
   for (const GpuTimerRecord& rec : s->records) {
     const uint64_t* b = &d[2 * rec.query];
     const uint64_t* e = &d[2 * (rec.query + 1)];
-    if (b[1] && e[1]) { t->user[rec.id].ns.push_back(to_ns(t, b[0], e[0])); }
+    if (b[1] && e[1] && !drop) { t->user[rec.id].ns.push_back(to_ns(t, b[0], e[0])); }
   }
 }
 

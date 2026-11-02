@@ -214,6 +214,9 @@ RunResult run_script(Session* s, const RunOptions& ro) {
       res.fps = secs > 0 ? res.frames / secs : 0.0;
       res.timers = timers_summary(&ts, &script.timers, s->gpu);
     }
+    // stopped by the app inside gpu.present (Back, quit, time limit, screenshot): timers the script keeps open across
+    // gpu.present are expected, close them quietly (the Lua state's sentinel warns only for scripts that end with one)
+    if (st == VmState::yield) { timer_set_close_open(&ts); }
     vm_destroy(L);
     bind_gpu_shutdown(&script);
   } else {

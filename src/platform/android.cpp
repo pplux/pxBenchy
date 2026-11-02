@@ -791,6 +791,43 @@ static float battery_temp_c(ANativeActivity* act) {
   return out;
 }
 
+#ifdef TRACY_ENABLE
+// First integer in a sysfs file, -1 when missing or not readable.
+static long read_sysfs(const char* path) {
+  FILE* f = fopen(path, "r");
+  if (!f) { return -1; }
+  long v = -1;
+  if (fscanf(f, "%ld", &v) != 1) { v = -1; }
+  fclose(f);
+  return v;
+}
+
+// GPU clock (MHz, 0 when unknown): Mali reports kHz, Adreno devfreq Hz.
+static float gpu_mhz() {
+  long khz = read_sysfs("/sys/class/misc/mali0/device/cur_freq");
+  if (khz > 0) { return khz / 1e3f; }
+  long hz = read_sysfs("/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq");
+  return hz > 0 ? hz / 1e6f : 0.0f;
+}
+
+// Up to 4 cpufreq policies (one per cluster, numbered by their first core) in order, MHz.
+static void cpu_mhz(float out[4]) {
+  int n = 0;
+  char path[96];
+  for (int cpu = 0; cpu < 32 && n < 4; cpu++) {
+    snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", cpu);
+    long khz = read_sysfs(path);
+    if (khz > 0) { out[n++] = khz / 1e3f; }
+  }
+}
+#endif
+
+const char* platform_thermal_status_name(float status) {
+  static const char* const names[] = {"none", "light", "moderate", "severe", "critical", "emergency", "shutdown"};
+  int i = (int)status;
+  return i >= 0 && i < 7 ? names[i] : "?";
+}
+
 void platform_thermal(PlatformThermal* out) {
   static AThermalManager* mgr = AThermal_acquireManager();
   static float headroom = 0.0f; // NaN while warming up or rate-limited: keep the last value
@@ -801,4 +838,8 @@ void platform_thermal(PlatformThermal* out) {
   }
   out->headroom = headroom;
   out->battery_c = battery_temp_c(s_app->activity);
+#ifdef TRACY_ENABLE
+  out->gpu_mhz = gpu_mhz();
+  cpu_mhz(out->cpu_mhz);
+#endif
 }

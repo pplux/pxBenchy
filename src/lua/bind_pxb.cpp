@@ -237,18 +237,10 @@ static int cpu_timer_results(lua_State* L) {
 
 static int sentinel_gc(lua_State* L) {
   TimerSet* ts = *(TimerSet**)lua_touserdata(L, 1);
-  if (!ts->open.empty()) {
-    std::string names;
-    for (size_t i = 0; i < ts->open.size(); i++) {
-      if (i) { names += ", "; }
-      names += ts->cpu[ts->open[i].id].name;
-    }
-#ifdef TRACY_ENABLE
-    for (size_t i = ts->open.size(); i-- > 0;) { ___tracy_emit_zone_end(ts->open[i].zone); }
-#endif
+  std::string names = timer_set_close_open(ts);
+  if (!names.empty()) {
     printf("warning: pxb timers still open: %s\n", names.c_str());
     fflush(stdout);
-    ts->open.clear();
   }
   return 0;
 }

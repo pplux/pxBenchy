@@ -88,5 +88,15 @@ struct PlatformThermal {
   float headroom = 0.0f;  // Android: AThermal_getThermalHeadroom (1.0 = severe throttling)
   float status = 0.0f;    // Android: AThermal_getCurrentThermalStatus 0-6 | macOS: NSProcessInfo thermalState 0-3
   float battery_c = 0.0f; // Android: ACTION_BATTERY_CHANGED temperature, degrees C
+#ifdef TRACY_ENABLE
+  // Tracy plots only (not readable on every device): Android sysfs, 0 when not readable. GPU clock (Mali
+  // mali0/device/cur_freq, Adreno kgsl-3d0/devfreq/cur_freq) and the CPU clusters' clocks (cpufreq policies in order,
+  // little cores first), MHz
+  float gpu_mhz = 0.0f;
+  float cpu_mhz[4] = {};
+#endif
 };
 void platform_thermal(PlatformThermal* out);
+// PlatformThermal::status as a word: Android none / light / moderate / severe / critical / emergency / shutdown (0-6)
+// | macOS nominal / fair / serious / critical (0-3); "?" outside the range.
+const char* platform_thermal_status_name(float status);

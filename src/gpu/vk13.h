@@ -49,6 +49,7 @@ using vkc::timer_results;
 using vkc::timers_break_interval;
 using vkc::timers_busy;
 using vkc::timers_clear;
+using vkc::timers_drop_frame;
 using vkc::timers_init;
 using vkc::timers_interval;
 using vkc::timers_resolve_all;

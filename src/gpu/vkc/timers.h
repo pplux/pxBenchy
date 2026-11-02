@@ -10,6 +10,8 @@ void timers_shutdown(GpuDevice* dev, GpuTimers* t); // destroys pools; device mu
 
 // After frame_end (offscreen blit submitted next): the interval from that frame to the next one is dropped.
 void timers_break_interval(GpuTimers* t);
+// After frame_end: that frame's busy and user timer results are dropped, and the interval to the next frame.
+void timers_drop_frame(GpuTimers* t);
 // Resolves every pending slot in frame order; call after vkDeviceWaitIdle.
 void timers_resolve_all(GpuDevice* dev, GpuTimers* t);
 void timers_clear(GpuTimers* t); // drops accumulated results (frame and user timers), next interval starts over

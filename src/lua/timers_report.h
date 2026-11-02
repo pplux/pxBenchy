@@ -43,6 +43,8 @@ void timer_set_frame_begin(TimerSet* ts); // at each successful frame begin (Fra
 void timer_set_break_interval(TimerSet* ts);
 // Drops CPU results and the cpu interval; open CPU timers discard their current occurrence.
 void timer_set_clear(TimerSet* ts);
+// Ends the open CPU timers without a result (and their Tracy zones). Returns their names, ", " separated ("" = none).
+std::string timer_set_close_open(TimerSet* ts);
 // The stats (total, mean, sd, median, p99, p95, min, max) of the automatic and user timers as a text table, gpu rows
 // before cpu rows, by name within each. GPU results must be resolved.
 std::string timers_report(const TimerSet* ts, const GpuTimers* gt, const GpuApiTable* gpu);

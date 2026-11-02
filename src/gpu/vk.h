@@ -366,6 +366,7 @@ struct GpuTimerSlot {
   bool pending = false;        // recorded, not resolved yet
   bool ended = false;          // frame_end hook ran
   bool break_interval = false; // offscreen blit after this frame: the interval to the next frame is dropped
+  bool drop = false;           // timers_drop_frame: busy and user timer results are dropped (reset when resolved)
   bool overflow_printed = false;
   std::vector<GpuTimerRecord> records; // closed user timers
 };

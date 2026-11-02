@@ -13,6 +13,7 @@ static PlatformThermal s_latest;
 
 #if !defined(__ANDROID__) && !defined(__APPLE__)
 void platform_thermal(PlatformThermal* out) { *out = PlatformThermal{}; }
+const char* platform_thermal_status_name(float) { return "?"; }
 #endif
 
 void thermal_start() {
@@ -29,6 +30,13 @@ void thermal_start() {
       TracyPlot("thermal headroom", t.headroom);
       TracyPlot("thermal status", t.status);
       TracyPlot("battery C", t.battery_c);
+#ifdef TRACY_ENABLE
+      if (t.gpu_mhz > 0.0f) { TracyPlot("gpu MHz", t.gpu_mhz); }
+      static const char* const cpu_names[4] = {"cpu0 MHz", "cpu1 MHz", "cpu2 MHz", "cpu3 MHz"};
+      for (int i = 0; i < 4; i++) {
+        if (t.cpu_mhz[i] > 0.0f) { TracyPlot(cpu_names[i], t.cpu_mhz[i]); }
+      }
+#endif
       lock.lock();
       s_latest = t;
       s_cv.wait_for(lock, std::chrono::seconds(1), [] { return s_stop; });

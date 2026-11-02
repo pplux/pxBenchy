@@ -1062,7 +1062,8 @@ static void draw_hud(GpuLua* g, VkCommandBuffer cmd) {
               g->gpu->present_mode_name(g->sc->present_mode), g->sc->offscreen ? " offscreen" : "",
               g->dev->validation ? "on" : "off", ext.width, ext.height, PXB_GIT_HASH);
   PlatformThermal th = thermal_latest();
-  ImGui::Text("thermal headroom %.2f  status %.0f  battery %.1f C", th.headroom, th.status, th.battery_c);
+  ImGui::Text("thermal headroom %.2f  status %s  battery %.1f C", th.headroom, platform_thermal_status_name(th.status),
+              th.battery_c);
   // user timers, one row per name (a cpu and a gpu timer may share it), in creation order
   std::vector<TimerRow> rows = timer_user_rows(g->ts, &g->timers);
   if (!rows.empty() && ImGui::BeginTable("timers", 3, ImGuiTableFlags_SizingFixedFit)) {
@@ -1131,6 +1132,7 @@ static int l_present(lua_State* L) {
   GpuLua* g = ctx(L);
   if (g->in_pass) { return luaL_error(L, "gpu.present: a pass is still open"); }
   bool presented = false;
+  bool timed = g->frame_timed; // end_frame clears it
   GpuScreenshot shot;
   bool shoot = g->frame_open && !g->screenshot.empty() && g->presents + 1 >= g->screenshot_frame;
   if (g->frame_open) {
@@ -1159,14 +1161,26 @@ static int l_present(lua_State* L) {
   if (g->sc->offscreen && !g->sc->submit_failed) {
     // about once per wall second: own submit captures the last submitted frame; two frames later (its fence waited,
     // nothing in flight depends on it) another submit copies the capture to the screen (+ HUD) and presents. The
-    // intervals spanning either submit are dropped.
+    // intervals spanning either submit are dropped. On Android the compositor's work on the new image slows the GPU
+    // frame right after the copy (Pixel 9: +20 ms): its GPU results are dropped. GPU-bound, the CPU waits for that
+    // frame when it reuses its slot, PXB_FRAMES_IN_FLIGHT presents after the copy: that cpu interval and the open CPU
+    // timers are dropped then.
     int64_t now = timer_now_ns();
     VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (g->since_copy >= 0) {
+      g->since_copy++;
+      if (g->since_copy == 1 && timed) { g->gpu->timers_drop_frame(&g->timers); }
+      if (g->since_copy == (int)PXB_FRAMES_IN_FLIGHT) {
+        timer_set_break_interval(g->ts);
+        g->since_copy = -1;
+      }
+    }
     if (g->blit_in > 0) {
       if (--g->blit_in == 0 && g->gpu->blit_begin(g->dev, g->sc, &cmd)) {
         if (g->hud) { draw_hud(g, cmd); }
         presented = g->gpu->blit_end(g->dev, g->sc);
         g->offscreen_presents++;
+        g->since_copy = 0;
         g->gpu->timers_break_interval(&g->timers);
         timer_set_break_interval(g->ts);
       }
@@ -1375,7 +1389,8 @@ std::string bind_gpu_report(const GpuLua* g) {
     o += "display -\n";
   }
   if (g->sc->offscreen) {
-    str_appendf(&o, "offscreen presents: %lld (blits, spanning intervals excluded)\n", g->offscreen_presents);
+    str_appendf(&o, "offscreen presents: %lld (blits; spanning intervals and the frame after each excluded)\n",
+                g->offscreen_presents);
   }
   if (g->time_limited) { str_appendf(&o, "time limit: %.0f s reached\n", g->time_limit_ns / 1e9); }
   float end = thermal_latest().headroom;
