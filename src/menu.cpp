@@ -128,8 +128,8 @@ static std::vector<std::string> table_runs(const Menu* m) {
   return runs;
 }
 
-// Result file (results_save) of every run in the table, status updated. Only on "Save results" or a Share that needs
-// the file: nothing is written before the user asks. Returns the path (macOS) | content:// URI (Android), "" on
+// Result file (results_save) of every run in the table, status updated. Only on Save or a Share JSON / Share text that
+// needs the file: nothing is written before the user asks. Returns the path (macOS) | content:// URI (Android), "" on
 // failure.
 static std::string save_results(Menu* m, Session* s) {
   std::string where;
@@ -143,8 +143,8 @@ static std::string save_results(Menu* m, Session* s) {
   return where;
 }
 
-// Share / Share as text / Copy the table's results JSON. Copy and Share as text write no file; Share (and Share as text
-// above PXB_SHARE_TEXT_MAX) saves the table and shares that file. Status = the outcome.
+// Share JSON / Share text / Copy the table's results JSON. Copy and Share text write no file; Share JSON (and Share
+// text above PXB_SHARE_TEXT_MAX) saves the table and shares that file. Status = the outcome.
 static void share(Menu* m, Session* s, Menu::Action a) {
   m->status.clear();
   std::string json = results_json(s, table_runs(m));
@@ -157,13 +157,13 @@ static void share(Menu* m, Session* s, Menu::Action a) {
     add_status(m, ok ? std::string("Copied ") + kb : "Copy failed: " + msg);
   } else if (as_text) {
     bool ok = platform_share_text(json, &msg);
-    add_status(m, ok ? msg + " (" + kb + " text)" : "Share as text failed: " + msg);
-  } else { // Share, or text too large for an intent extra: the file instead
+    add_status(m, ok ? msg + " (" + kb + " text)" : "Share text failed: " + msg);
+  } else { // Share JSON, or text too large for an intent extra: the file instead
     std::string where = save_results(m, s);
     if (where.empty()) { return; }
     bool ok = platform_share_file(where, &msg);
     if (a == Menu::Action::share_text) { add_status(m, std::string(kb) + " is too large for text, sharing the file:"); }
-    add_status(m, ok ? msg : "Share failed: " + msg);
+    add_status(m, ok ? msg : "Share JSON failed: " + msg);
   }
   printf("menu: share: %s\n", m->status.c_str());
   fflush(stdout);
@@ -377,10 +377,10 @@ static void build_results(Menu* m) {
   same_line_if_fits("Clear");
   ImGui::BeginDisabled(m->results.empty());
   if (ImGui::Button("Clear")) { m->action = Menu::Action::clear; }
-  same_line_if_fits("Save results");
-  if (ImGui::Button("Save results")) { m->action = Menu::Action::save; }
+  same_line_if_fits("Save");
+  if (ImGui::Button("Save")) { m->action = Menu::Action::save; }
   static const std::pair<const char*, Menu::Action> share_buttons[] = {
-      {"Share", Menu::Action::share}, {"Share as text", Menu::Action::share_text}, {"Copy", Menu::Action::copy}};
+      {"Share JSON", Menu::Action::share}, {"Share text", Menu::Action::share_text}, {"Copy", Menu::Action::copy}};
   for (const auto& b : share_buttons) {
     same_line_if_fits(b.first);
     if (ImGui::Button(b.first)) { m->action = b.second; }
@@ -453,18 +453,18 @@ static void build_results(Menu* m) {
 static void build_menu(Menu* m, Session* s) {
   begin_fullscreen("menu", m->insets);
   char thermal[64];
-  snprintf(thermal, sizeof(thermal), "  thermal headroom %.2f", thermal_latest().headroom);
+  PlatformThermal th = thermal_latest();
+  snprintf(thermal, sizeof(thermal), "  thermal headroom %.2f  status %s", th.headroom,
+           platform_thermal_status_name(th.status));
   ImGui::Text("pxBenchy %s  %s  git %s", PXB_VERSION, m->device_summary.c_str(), PXB_GIT_HASH);
   // on the header line when it fits (2304 px at scale 1.75 does not), else first on the status line
   float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
   bool header = x + ImGui::CalcTextSize(thermal).x <= ImGui::GetContentRegionMax().x;
   if (header) { ImGui::SameLine(); }
   ImGui::TextDisabled("%s", header ? thermal : thermal + 2);
-  if (!header) { ImGui::SameLine(0.0f, ImGui::CalcTextSize("  ").x); }
   if (!m->status.empty()) {
+    if (!header) { ImGui::SameLine(0.0f, ImGui::CalcTextSize("  ").x); }
     ImGui::TextWrapped("%s", m->status.c_str()); // run + "stopped after" + saved URI can exceed the width
-  } else {
-    ImGui::TextDisabled("Back / Esc: exit. During a run: stop it.");
   }
   if (!m->update_tag.empty()) {
     ImGui::AlignTextToFramePadding();

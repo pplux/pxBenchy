@@ -598,7 +598,7 @@ static bool copy_jni(JNIEnv* env, jobject activity, const std::string& text) {
 
 bool platform_copy_text(const std::string& text, std::string* msg) {
   if (text.size() > PXB_SHARE_TEXT_MAX) {
-    *msg = "too large for the clipboard; use Share";
+    *msg = "too large for the clipboard; use Share JSON";
     return false;
   }
   bool ok = with_jni([&](JNIEnv* env, jobject act) { return copy_jni(env, act, text); });

@@ -39,13 +39,13 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
   in name order with the same options, back to back; Back during a script stops the remaining ones.
 - Results: one row per run (script, vulkan, `val` / `off` options, fps, median gpu busy and cpu frame interval in ms),
   kept for the app session in run order ("Run all" adds one row per script). Tap a row for the median of each
-  timer. Clear empties the table. "Save results" saves every run in the table. The status line shows the path (macOS)
+  timer. Clear empties the table. Save saves every run in the table. The status line shows the path (macOS)
   or `content://` URI (Android).
-- Share, Share as text, Copy: send the table's results JSON (disabled while the table is empty). Copy and Share as
-  text write no file; Share saves the table to a new file and shares it. Android: Share opens the share sheet with the JSON file
-  (`application/json`, subject `pxBenchy results <model>`; mail, Slack, Drive, ...); Share as text opens it with the
+- Share JSON, Share text, Copy: send the table's results JSON (disabled while the table is empty). Copy and Share
+  text write no file; Share JSON saves the table to a new file and shares it. Android: Share JSON opens the share sheet with the JSON file
+  (`application/json`, subject `pxBenchy results <model>`; mail, Slack, Drive, ...); Share text opens it with the
   JSON as plain text (files over 500 KB are shared as a file instead); Copy puts the JSON on the clipboard (over
-  500 KB: refused, use Share). macOS: Share reveals the file in Finder; Share as text and Copy copy the JSON to the
+  500 KB: refused, use Share JSON). macOS: Share JSON reveals the file in Finder; Share text and Copy copy the JSON to the
   pasteboard. The status line shows the outcome (`Copied 3.2 KB`, `share sheet opened`, or the error).
 - Update check (Android): at start, the latest GitHub release (`api.github.com/repos/pplux/pxBenchy/releases/latest`)
   `tag_name` (`vX.Y.Z` or `X.Y.Z`) is compared with the build's version; a newer one shows `pxBenchy <tag> available`
@@ -164,7 +164,7 @@ The menu header shows a one-line summary (device, driver and version, model, OS)
 
 ### Result files
 
-The menu's "Save results" and Share write one JSON file, every run of the table in run order:
+The menu's Save and Share JSON write one JSON file, every run of the table in run order:
 
 ```
 {"pxbenchy":1,"device":{...},"vulkan":{...},"runs":[

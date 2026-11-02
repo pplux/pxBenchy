@@ -50,6 +50,12 @@ for entry in "${DEPS[@]}"; do
   echo "| $name | https://github.com/$repo | \`$ref\` | \`$sha\` |" >> VERSIONS.md.tmp
 done
 
+# Tracy v0.14.1: the command-buffer VkCtx allocates m_res for one int64 per query, Collect reads two (value +
+# availability) and overflows the heap. Fixed on master; drop this when bumping past v0.14.1.
+f=tracy/public/tracy/TracyVulkan.hpp
+grep -q 'sizeof( int64_t ) \* m_queryCount );' "$f" || { echo "error: tracy m_res patch does not apply" >&2; exit 1; }
+perl -pi -e 's/sizeof\( int64_t \) \* m_queryCount \);/sizeof( int64_t ) * m_queryCount * 2 );/' "$f"
+
 # Prebuilt Android validation layer (release asset, arm64-v8a only).
 VVL_REPO=KhronosGroup/Vulkan-ValidationLayers
 VVL_REF=vulkan-sdk-1.4.363.0
