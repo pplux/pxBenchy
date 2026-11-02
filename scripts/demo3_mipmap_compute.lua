@@ -90,7 +90,7 @@ local function gen_compute()
   m.gpu:stop(); m.cpu:stop()
 end
 
-for frame = 1, pxb.args.frames_warmup + pxb.args.frames do
+repeat
   gen_compute()
   gpu.begin_pass{clear = {0.05, 0.05, 0.1, 1}}
   for _, r in ipairs(rects) do
@@ -98,5 +98,4 @@ for frame = 1, pxb.args.frames_warmup + pxb.args.frames do
       bind = {tex = tex}, push = {rect = r.rect, lod = r.lod}}
   end
   gpu.end_pass()
-  gpu.present()
-end
+until not gpu.present()

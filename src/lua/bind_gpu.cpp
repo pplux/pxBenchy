@@ -7,14 +7,8 @@
 #include <optional>
 #include <string>
 #include "lua/gpu_api.h"
-#include "lua/timers_report.h"
-#include "device_info.h"
-#include "json.h"
-#include "ui.h"
-#include "platform/platform.h"
-#include "platform/thermal.h"
-#include "git_version.h"
-#include <imgui.h>
+#include "lua/vm.h"
+#include "timers.h"
 #include <tracy/Tracy.hpp>
 extern "C" {
 #include <lua.h>
@@ -94,47 +88,9 @@ static void flush_dead(GpuLua* g, bool idle) {
   g->dead.resize(keep);
 }
 
-// ---- frame lifecycle ----
-
-// Opens the frame (waits for its slot, acquires): when gpu.present resumes the script, so the wait is not inside the
-// script's own timers, or at the first use after a skip. False = frame skipped (swapchain unavailable) until the next
-// present.
-static bool open_frame(GpuLua* g) {
-  if (g->frame_open) { return true; }
-  if (g->skipped) { return false; }
-  VkCommandBuffer cmd = VK_NULL_HANDLE;
-  if (!g->gpu->frame_begin(g->dev, g->sc, &cmd)) {
-    g->skipped = true;
-    return false;
-  }
-  g->gpu->descriptors_frame_begin(g->dev, &g->descriptors, g->sc->frame);
-  g->frame_open = true;
-  g->cmd = cmd;
-  g->opens++;
-  flush_dead(g, false);
-  return true;
-}
-
-// Before the script's first command of the frame: the frame open and its timers started. A frame the script records
-// nothing into (e.g. opened by the last gpu.present) adds no timer samples.
-static bool ensure_frame(GpuLua* g) {
-  if (!open_frame(g)) { return false; }
-  if (!g->frame_timed) {
-    FrameMark;
-    timer_set_frame_begin(g->ts);
-    g->gpu->timers_frame_begin(g->dev, g->sc, &g->timers, g->cmd);
-    g->frame_timed = true;
-  }
-  return true;
-}
-
-static void end_frame(GpuLua* g, bool* presented) {
-  if (g->frame_timed) { g->gpu->timers_frame_end(&g->timers, g->cmd); }
-  g->frame_timed = false;
-  bool ok = g->gpu->frame_end(g->dev, g->sc);
-  if (presented) { *presented = ok; }
-  g->frame_open = false;
-  g->cmd = VK_NULL_HANDLE;
+// The final resume (the run is over, gpu.present returned false) has no frame: calls that record into it raise this.
+static void check_frame(lua_State* L, const char* fn) {
+  if (!ctx(L)->frame_open) { luaL_error(L, "%s: no frame (the run has ended)", fn); }
 }
 
 // ---- argument helpers (no longjmp) ----
@@ -299,12 +255,10 @@ static GpuBuffer* check_buf(lua_State* L, int idx) {
 
 static int buf_open(lua_State* L) {
   GpuBuffer* b = check_buf(L, 1);
+  check_frame(L, "buf:open");
   GpuLua* g = ctx(L);
   if (g->in_pass) { return luaL_error(L, "buf:open inside a pass"); }
-  // staged: open the frame first, so its slot fence is waited before the slot's staging buffer is rewritten
-  if (b->mode == GpuBufferMode::staged && !ensure_frame(g)) {
-    return luaL_error(L, "no frame (swapchain unavailable)");
-  }
+  // staged: the frame is open (its slot fence waited) before the slot's staging buffer is rewritten
   if (!g->gpu->buffer_open(g->dev, b, g->sc->frame)) { return luaL_error(L, "buf:open failed"); }
   return 0;
 }
@@ -344,13 +298,11 @@ static int buf_write(lua_State* L) {
 
 static int buf_close(lua_State* L) {
   GpuBuffer* b = check_buf(L, 1);
+  check_frame(L, "buf:close");
   GpuLua* g = ctx(L);
   VkCommandBuffer cmd = VK_NULL_HANDLE;
   if (g->in_pass) { return luaL_error(L, "buf:close inside a pass"); }
-  if (b->mode == GpuBufferMode::staged) {
-    if (!ensure_frame(g)) { return luaL_error(L, "no frame (swapchain unavailable)"); }
-    cmd = g->cmd;
-  }
+  if (b->mode == GpuBufferMode::staged) { cmd = g->cmd; }
   if (!g->gpu->buffer_close(b, cmd)) { return luaL_error(L, "buf:close failed"); }
   return 0;
 }
@@ -429,9 +381,9 @@ static int tex_upload(lua_State* L) {
   size_t len;
   const char* data = luaL_checklstring(L, 2, &len);
   uint32_t mip = check_mip(L, t, 3);
+  check_frame(L, "tex:upload");
   GpuLua* g = ctx(L);
   if (g->in_pass) { return luaL_error(L, "tex:upload inside a pass"); }
-  if (!ensure_frame(g)) { return luaL_error(L, "no frame (swapchain unavailable)"); }
   GpuBuffer staging;
   if (!g->gpu->texture_upload(g->dev, t, mip, data, len, g->cmd, &staging)) {
     return luaL_error(L, "tex:upload failed");
@@ -503,7 +455,6 @@ static int blit_impl(lua_State* L, GpuLua* g, Err* e) {
   int filter = 0;
   if (opt_enum(L, 1, "filter", FILTER_NAMES, &filter, e) < 0) { return -1; }
   if (g->in_pass) { return fail(e, "inside a pass"); }
-  if (!ensure_frame(g)) { return fail(e, "no frame (swapchain unavailable)"); }
   if (!g->gpu->texture_blit(g->cmd, tex[0], (uint32_t)mip[0], tex[1], (uint32_t)mip[1],
                             filter == 0 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST)) {
     return fail(e, "blit failed");
@@ -514,6 +465,7 @@ static int blit_impl(lua_State* L, GpuLua* g, Err* e) {
 
 static int l_blit(lua_State* L) {
   luaL_checktype(L, 1, LUA_TTABLE);
+  check_frame(L, "gpu.blit");
   Err e;
   if (blit_impl(L, ctx(L), &e) < 0) { return luaL_error(L, "gpu.blit: %s", e.msg); }
   return 0;
@@ -690,10 +642,6 @@ static int begin_pass_impl(lua_State* L, GpuLua* g, Err* e) {
     if (opt_bool(L, 1, "depth", &d.depth, e) < 0) { return -1; }
   }
   if (g->in_pass) { return fail(e, "pass already open"); }
-  if (!ensure_frame(g)) {
-    g->in_pass = true; // virtual pass on a skipped frame
-    return 0;
-  }
   for (GpuTexture* t : g->dirty) { g->gpu->ensure_state_tex(g->cmd, t, {vkc::SAMPLED_FRAGMENT}); }
   g->dirty.clear();
   if (!g->gpu->pass_begin(g->dev, g->sc, &g->pass, g->cmd, d)) { return fail(e, "begin_pass failed"); }
@@ -702,6 +650,7 @@ static int begin_pass_impl(lua_State* L, GpuLua* g, Err* e) {
 }
 
 static int l_begin_pass(lua_State* L) {
+  check_frame(L, "gpu.begin_pass");
   Err e;
   if (begin_pass_impl(L, ctx(L), &e) < 0) { return luaL_error(L, "gpu.begin_pass: %s", e.msg); }
   return 0;
@@ -880,9 +829,8 @@ static int draw_impl(lua_State* L, GpuLua* g, Err* e) {
   int ty = lua_getfield(L, 1, "push");
   bool have_push = ty == LUA_TTABLE;
   if (ty != LUA_TNIL && !have_push) { return fail(e, "push must be a table"); }
-  if (have_push && !g->skipped && pack_push(L, pipe, block, e) < 0) { return -1; }
+  if (have_push && pack_push(L, pipe, block, e) < 0) { return -1; }
   lua_pop(L, 1);
-  if (g->skipped) { return 0; }
   d.push = pipe->push.size > 0 ? block : nullptr;
   if (!binds.empty()) {
     std::vector<VkImageView> views(binds.size());
@@ -909,6 +857,7 @@ static int draw_impl(lua_State* L, GpuLua* g, Err* e) {
 
 static int l_draw(lua_State* L) {
   luaL_checktype(L, 1, LUA_TTABLE);
+  check_frame(L, "gpu.draw");
   Err e;
   if (draw_impl(L, ctx(L), &e) < 0) { return luaL_error(L, "gpu.draw: %s", e.msg); }
   return 0;
@@ -943,7 +892,6 @@ static int dispatch_impl(lua_State* L, GpuLua* g, Err* e) {
   lua_pop(L, 1);
 
   if (g->in_pass) { return fail(e, "inside a pass"); }
-  if (!ensure_frame(g)) { return fail(e, "no frame (swapchain unavailable)"); }
 
   std::vector<VkImageView> views(binds.size());
   for (size_t k = 0; k < binds.size(); k++) {
@@ -974,6 +922,7 @@ static int dispatch_impl(lua_State* L, GpuLua* g, Err* e) {
 
 static int l_dispatch(lua_State* L) {
   luaL_checktype(L, 1, LUA_TTABLE);
+  check_frame(L, "gpu.dispatch");
   Err e;
   if (dispatch_impl(L, ctx(L), &e) < 0) { return luaL_error(L, "gpu.dispatch: %s", e.msg); }
   return 0;
@@ -989,230 +938,35 @@ static void wait_idle(GpuLua* g) {
   flush_dead(g, true);
 }
 
-// After the warm-up presents: drops every timer result so far (frame not open: present just ended it).
-static void warmup_reset(GpuLua* g) {
-  wait_idle(g);
-  g->gpu->timers_resolve_all(g->dev, &g->timers);
-  g->gpu->timers_clear(&g->timers);
-  timer_set_clear(g->ts);
-  // the vectors can refill past `seen` before the next HUD draw (offscreen), so a size check would not catch the reset
-  g->hud_busy = HudEma{};
-  g->hud_gpu.clear();
-  g->hud_cpu.clear();
-  g->measure_start_ns = timer_now_ns();
-  g->measure_start_presents = g->presents;
-  g->offscreen_presents = 0;
-  g->headroom_start = thermal_latest().headroom;
-}
-
-// HUD values (a single sample is too noisy to read): exponential moving average per sample, a = 2 / (N + 1) with
-// N = HUD_EMA_SAMPLES, the same mean sample age as an N-sample mean (the last N samples carry ~86% of the weight).
-// Takes every sample since the last call (offscreen the HUD draws ~1/s, samples arrive per frame): O(new samples).
-// Returns the average in ms, -1 when no sample yet.
-constexpr double HUD_EMA_SAMPLES = 60.0;
-template <typename T> static double update(HudEma* e, const std::vector<T>& v) {
-  const double a = 2.0 / (HUD_EMA_SAMPLES + 1.0);
-  for (size_t i = e->seen; i < v.size(); i++) {
-    double x = (double)v[i] / 1e6;
-    e->ms = i == 0 ? x : e->ms + a * (x - e->ms); // the first sample starts the average
-  }
-  e->seen = v.size();
-  return e->ms;
-}
-
-// Live stats as an ImGui window (top-left, no decoration) in its own LOAD pass on the swapchain image (frame cmd:
-// counted in gpu busy; offscreen: blit cmd). The ImGui frame is built each time (D1). Text height follows the former
-// 8x8 HUD: 8 px per 360 px of the shorter view side. The style (gpu_ui_init) is white on nearly opaque black:
-// blending happens in linear space on the sRGB swapchain, so translucent or grey backgrounds wash out.
-static void draw_hud(GpuLua* g, VkCommandBuffer cmd) {
-  VkExtent2D ext = g->sc->view_extent;
-  if (!ext.width || !ext.height) { return; }
-  int64_t now = timer_now_ns();
-  float scale = std::min(ext.width, ext.height) / 360.0f;
-
-  gpu_ui_input(g->ui);
-  gpu_ui_new_frame(g->ui, ext);
-  ImGui::PushFont(nullptr, std::max(13.0f, 8.0f * scale));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * scale, 4.0f * scale));
-  ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f * scale, 0.0f));
-  ImGui::SetNextWindowPos(ImVec2(4.0f * scale, 4.0f * scale));
-  ImGui::Begin("hud", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-  long long n = g->presents + 1;
-  ImGui::Text("%s", path_base_name(g->path));
-  if (g->frames) {
-    ImGui::Text("frame %lld/%lld%s  elapsed %.1f s", n, g->frames_warmup + g->frames,
-                g->presents < g->frames_warmup ? " WARMUP" : "", (now - g->start_ns) / 1e9);
-  } else {
-    ImGui::Text("frame %lld%s  elapsed %.1f s", n, g->presents < g->frames_warmup ? " WARMUP" : "",
-                (now - g->start_ns) / 1e9);
-  }
-  char display[32];
-  if (g->sc->refresh_ns) {
-    snprintf(display, sizeof(display), "display %.0f Hz", 1e9 / g->sc->refresh_ns);
-  } else {
-    snprintf(display, sizeof(display), "display -");
-  }
-  double busy_ms = update(&g->hud_busy, g->gpu->timers_busy(&g->timers));
-  // frame ms = mean over the fps window (a single interval sample is too noisy to read); gpu busy = moving average
-  ImGui::Text("fps %.1f (%.2f ms)  gpu busy %.3f ms  %s", g->fps, g->fps > 0 ? 1000.0 / g->fps : 0.0,
-              busy_ms < 0 ? 0.0 : busy_ms, display);
-  ImGui::Text("vk%s  %s%s  validation %s  %ux%u  git %s", gpu_api_name(g->api),
-              g->gpu->present_mode_name(g->sc->present_mode), g->sc->offscreen ? " offscreen" : "",
-              g->dev->validation ? "on" : "off", ext.width, ext.height, PXB_GIT_HASH);
-  PlatformThermal th = thermal_latest();
-  ImGui::Text("thermal headroom %.2f  status %s  battery %.1f C", th.headroom, platform_thermal_status_name(th.status),
-              th.battery_c);
-  // user timers, one row per name (a cpu and a gpu timer may share it), in creation order
-  std::vector<TimerRow> rows = timer_user_rows(g->ts, &g->timers);
-  if (!rows.empty() && ImGui::BeginTable("timers", 3, ImGuiTableFlags_SizingFixedFit)) {
-    ImGui::TableSetupColumn("timer (ms, ema 60)");
-    ImGui::TableSetupColumn("gpu");
-    ImGui::TableSetupColumn("cpu");
-    ImGui::TableHeadersRow();
-    for (const TimerRow& r : rows) {
-      double gpu_ms = -1.0, cpu_ms = -1.0;
-      if (r.gpu >= 0) {
-        if (g->hud_gpu.size() <= (size_t)r.gpu) { g->hud_gpu.resize(r.gpu + 1); }
-        gpu_ms = update(&g->hud_gpu[r.gpu], g->gpu->timer_results(&g->timers, r.gpu));
-      }
-      if (r.cpu >= 0) {
-        if (g->hud_cpu.size() <= (size_t)r.cpu) { g->hud_cpu.resize(r.cpu + 1); }
-        cpu_ms = update(&g->hud_cpu[r.cpu], g->ts->cpu[r.cpu].ns);
-      }
-      ImGui::TableNextRow();
-      ImGui::TableNextColumn();
-      ImGui::TextUnformatted(r.name.c_str());
-      for (double v : {gpu_ms, cpu_ms}) {
-        ImGui::TableNextColumn();
-        if (v >= 0) {
-          ImGui::Text("%.3f", v);
-        } else {
-          ImGui::TextUnformatted("-");
-        }
-      }
-    }
-    ImGui::EndTable();
-  }
-  ImGui::End();
-  ImGui::PopStyleVar(2);
-  ImGui::PopFont();
-  ImGui::Render();
-
-  ImDrawData* dd = ImGui::GetDrawData();
-  if (!g->gpu->imgui_prepare(g->dev, g->sc, &g->ui->im, cmd, dd)) { return; }
-  GpuPassDesc d;
-  d.swapchain = true;
-  if (!g->gpu->pass_begin(g->dev, g->sc, &g->pass, cmd, d)) { return; }
-  g->gpu->imgui_draw(&g->ui->im, &g->pass, dd);
-  g->gpu->pass_end(&g->pass);
-}
-
-// HUD fps: presents per completed 1 s wall window.
-static void count_fps(GpuLua* g) {
-  int64_t now = timer_now_ns();
-  g->fps_frames++;
-  if (now - g->fps_t0 >= 1000000000) {
-    g->fps = g->fps_frames * 1e9 / (now - g->fps_t0);
-    g->fps_t0 = now;
-    g->fps_frames = 0;
-  }
-}
-
-// gpu.present continues here when the session resumes the script: returns presented.
+// gpu.present continues here when the run resumes the script: true with the next frame open, false at the final
+// resume (the run is over, no frame).
 static int present_k(lua_State* L, int, lua_KContext) {
-  open_frame(ctx(L)); // the next frame's slot wait and acquire happen here, inside gpu.present
-  lua_pushboolean(L, ctx(L)->presented);
+  lua_pushboolean(L, ctx(L)->frame_open);
   return 1;
 }
 
-// Ends the frame and yields to the session's frame loop (events, stop, swapchain changes happen there).
+// Yields to the run, which ends the frame (HUD, screenshot, offscreen, windows) and opens the next one before resuming,
+// or resumes once more without a frame when the run is over.
 static int l_present(lua_State* L) {
   GpuLua* g = ctx(L);
+  if (!g->frame_open) { return luaL_error(L, "gpu.present: the run has ended"); }
   if (g->in_pass) { return luaL_error(L, "gpu.present: a pass is still open"); }
-  bool presented = false;
-  bool timed = g->frame_timed; // end_frame clears it
-  GpuScreenshot shot;
-  bool shoot = g->frame_open && !g->screenshot.empty() && g->presents + 1 >= g->screenshot_frame;
-  if (g->frame_open) {
-    // before the HUD: the screenshot shows the scene only
-    if (shoot && !g->gpu->screenshot_record(g->dev, g->sc, g->cmd, &shot)) {
-      return luaL_error(L, "gpu.present: screenshot failed");
-    }
-    if (g->hud && !g->sc->offscreen) { draw_hud(g, g->cmd); }
-    end_frame(g, &presented);
-  }
-  if (shoot) {
-    wait_idle(g);
-    if (g->sc->submit_failed) {
-      g->gpu->screenshot_destroy(g->dev, &shot);
-      return luaL_error(L, "gpu.present: submit failed");
-    }
-    if (!g->gpu->screenshot_write(g->dev, g->sc, &shot, g->screenshot.c_str())) {
-      return luaL_error(L, "gpu.present: screenshot failed");
-    }
-    printf("screenshot: %s (frame %lld, %ux%u)\n", g->screenshot.c_str(), g->presents + 1, g->sc->view_extent.width,
-           g->sc->view_extent.height);
-    fflush(stdout);
-    g->screenshot_taken = true; // the session ends the run: not resumed
-    return lua_yield(L, 0);
-  }
-  if (g->sc->offscreen && !g->sc->submit_failed) {
-    // about once per wall second: own submit captures the last submitted frame; two frames later (its fence waited,
-    // nothing in flight depends on it) another submit copies the capture to the screen (+ HUD) and presents. The
-    // intervals spanning either submit are dropped. On Android the compositor's work on the new image slows the GPU
-    // frame right after the copy (Pixel 9: +20 ms): its GPU results are dropped. GPU-bound, the CPU waits for that
-    // frame when it reuses its slot, PXB_FRAMES_IN_FLIGHT presents after the copy: that cpu interval and the open CPU
-    // timers are dropped then.
-    int64_t now = timer_now_ns();
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (g->since_copy >= 0) {
-      g->since_copy++;
-      if (g->since_copy == 1 && timed) { g->gpu->timers_drop_frame(&g->timers); }
-      if (g->since_copy == (int)PXB_FRAMES_IN_FLIGHT) {
-        timer_set_break_interval(g->ts);
-        g->since_copy = -1;
-      }
-    }
-    if (g->blit_in > 0) {
-      if (--g->blit_in == 0 && g->gpu->blit_begin(g->dev, g->sc, &cmd)) {
-        if (g->hud) { draw_hud(g, cmd); }
-        presented = g->gpu->blit_end(g->dev, g->sc);
-        g->offscreen_presents++;
-        g->since_copy = 0;
-        g->gpu->timers_break_interval(&g->timers);
-        timer_set_break_interval(g->ts);
-      }
-    } else if (now - g->last_present_ns >= 1000000000 && g->gpu->capture(g->dev, g->sc)) {
-      g->last_present_ns = now;
-      g->blit_in = 2;
-      g->gpu->timers_break_interval(&g->timers);
-      timer_set_break_interval(g->ts);
-    }
-  }
-  count_fps(g);
-  if (g->sc->submit_failed) { return luaL_error(L, "gpu.present: submit failed"); }
-  if (++g->presents == g->frames_warmup) { warmup_reset(g); }
-  g->skipped = false;
-  g->presented = presented;
   return lua_yieldk(L, 0, 0, present_k);
 }
 
 static int l_wait_idle(lua_State* L) {
-  GpuLua* g = ctx(L);
-  wait_idle(g);
-  // resolving would drop the open frame's timings (its slot is pending but not ended)
-  if (!g->frame_timed) { g->gpu->timers_resolve_all(g->dev, &g->timers); }
+  wait_idle(ctx(L));
   return 0;
 }
 
 // ---- timers ----
 
 static int timer_impl(lua_State* L, GpuLua* g, const char* name, Err* e) {
-  uint32_t id = g->gpu->timer_create(&g->timers, name);
+  int line = 0;
+  std::string file = vm_caller(L, &line);
+  uint32_t id = g->gpu->timer_create(&g->timers->gpu, name, file.c_str(), (uint32_t)line);
   if (id == UINT32_MAX) { return fail(e, "timer '%s' already exists", name); }
-  g->ts->order.push_back({true, id});
+  g->timers->order.push_back({true, id});
   TimerUD* u = (TimerUD*)lua_newuserdatauv(L, sizeof(TimerUD), 0);
   u->id = id;
   luaL_setmetatable(L, TIMER_MT);
@@ -1228,25 +982,24 @@ static int l_timer(lua_State* L) {
 
 static int timer_start(lua_State* L) {
   uint32_t id = ((TimerUD*)luaL_checkudata(L, 1, TIMER_MT))->id;
+  check_frame(L, "gpu_timer:start");
   GpuLua* g = ctx(L);
-  if (!ensure_frame(g)) { return 0; }
-  if (!g->gpu->timer_begin(&g->timers, g->cmd, id)) { return luaL_error(L, "gpu_timer:start failed"); }
+  if (!g->gpu->timer_begin(&g->timers->gpu, g->cmd, id)) { return luaL_error(L, "gpu_timer:start failed"); }
   return 0;
 }
 
 static int timer_stop(lua_State* L) {
   uint32_t id = ((TimerUD*)luaL_checkudata(L, 1, TIMER_MT))->id;
+  check_frame(L, "gpu_timer:stop");
   GpuLua* g = ctx(L);
-  if (g->skipped) { return 0; }
-  if (!g->frame_open) { return luaL_error(L, "gpu_timer:stop: timer '%s' not open", g->timers.user[id].name.c_str()); }
-  if (!g->gpu->timer_end(&g->timers, g->cmd, id)) { return luaL_error(L, "gpu_timer:stop failed"); }
+  if (!g->gpu->timer_end(&g->timers->gpu, g->cmd, id)) { return luaL_error(L, "gpu_timer:stop failed"); }
   return 0;
 }
 
 static int timer_results(lua_State* L) {
   uint32_t id = ((TimerUD*)luaL_checkudata(L, 1, TIMER_MT))->id;
   GpuLua* g = ctx(L);
-  const std::vector<double>& v = g->gpu->timer_results(&g->timers, id);
+  const std::vector<double>& v = g->gpu->timer_results(&g->timers->gpu, id);
   lua_createtable(L, (int)v.size(), 0);
   for (size_t i = 0; i < v.size(); i++) {
     lua_pushnumber(L, v[i]);
@@ -1264,20 +1017,13 @@ static int l_swapchain_size(lua_State* L) {
 
 // ---- setup / teardown ----
 
-bool bind_gpu_init(GpuLua* g, GpuApi api, GpuDevice* dev, GpuSwapchain* sc, GpuUi* ui, TimerSet* ts, long long frames,
-                   long long frames_warmup, bool hud) {
+bool bind_gpu_init(GpuLua* g, GpuApi api, GpuDevice* dev, GpuSwapchain* sc, Timers* timers) {
   g->api = api;
   g->gpu = gpu_api_table(api);
   g->dev = dev;
   g->sc = sc;
-  g->ui = ui;
-  g->ts = ts;
-  g->frames = frames;
-  g->frames_warmup = frames_warmup;
-  g->hud = hud;
-  g->start_ns = g->fps_t0 = g->measure_start_ns = timer_now_ns();
-  g->headroom_start = thermal_latest().headroom;
-  if (!g->gpu->timers_init(dev, &g->timers)) {
+  g->timers = timers;
+  if (!g->gpu->timers_init(dev, &g->timers->gpu)) {
     fprintf(stderr, "error: gpu_timers_init failed\n");
     return false;
   }
@@ -1346,102 +1092,16 @@ void bind_gpu_register(lua_State* L, GpuLua* g) {
   lua_setglobal(L, "gpu");
 }
 
-void bind_gpu_finish(GpuLua* g) {
-  g->measure_end_ns = timer_now_ns();
-  if (g->pass.cmd) { g->gpu->pass_end(&g->pass); }
-  g->in_pass = false;
-  if (g->frame_open) { end_frame(g, nullptr); }
-  wait_idle(g);
-  g->gpu->timers_resolve_all(g->dev, &g->timers);
+void bind_gpu_frame_opened(GpuLua* g) {
+  g->opens++;
+  flush_dead(g, false);
 }
 
 void bind_gpu_wait_idle(GpuLua* g) { wait_idle(g); }
 
-void bind_gpu_swapchain_recreated(GpuLua* g) { g->blit_in = 0; }
-
-void bind_gpu_paused(GpuLua* g, int64_t ns) {
-  g->start_ns += ns;
-  g->measure_start_ns += ns;
-  g->fps_t0 += ns;
-  g->last_present_ns += ns;
-  g->gpu->timers_break_interval(&g->timers);
-  timer_set_break_interval(g->ts);
-}
-
-int64_t bind_gpu_measured_ns(const GpuLua* g) {
-  return g->presents >= g->frames_warmup ? timer_now_ns() - g->measure_start_ns : 0;
-}
-
-long long bind_gpu_measured(const GpuLua* g, double* secs) {
-  *secs = (g->measure_end_ns - g->measure_start_ns) / 1e9;
-  return g->presents - g->measure_start_presents;
-}
-
-std::string bind_gpu_report(const GpuLua* g) {
-  std::string o;
-  double secs = 0.0;
-  long long frames = bind_gpu_measured(g, &secs);
-  str_appendf(&o, "run: vulkan %s, %lld frames in %.3f s = %.1f fps, ", gpu_api_name(g->api), frames, secs,
-              secs > 0 ? frames / secs : 0.0);
-  if (g->sc->refresh_ns) {
-    str_appendf(&o, "display %.1f Hz (refresh %.3f ms)\n", 1e9 / g->sc->refresh_ns, g->sc->refresh_ns / 1e6);
-  } else {
-    o += "display -\n";
-  }
-  if (g->sc->offscreen) {
-    str_appendf(&o, "offscreen presents: %lld (blits; spanning intervals and the frame after each excluded)\n",
-                g->offscreen_presents);
-  }
-  if (g->time_limited) { str_appendf(&o, "time limit: %.0f s reached\n", g->time_limit_ns / 1e9); }
-  float end = thermal_latest().headroom;
-  str_appendf(&o, "thermal headroom: start %.3f end %.3f (delta %+.3f)\n", g->headroom_start, end,
-              end - g->headroom_start);
-  return o;
-}
-
-std::string bind_gpu_report_json(const GpuLua* g, const char* script) {
-  const GpuSwapchain* sc = g->sc;
-  std::string o = "{\"script\":" + json_string(script) + ",\"device\":" + json_string(g->dev->props.deviceName) +
-                  ",\"vulkan\":\"" + gpu_api_name(g->api) + "\"";
-  char buf[256];
-  snprintf(buf, sizeof(buf),
-           ",\"validation\":%s,\"present_mode\":\"%s\",\"offscreen\":%s,\"hud\":%s,\"extent\":[%u,%u]"
-           ",\"frames\":%lld,\"frames_warmup\":%lld",
-           g->dev->validation ? "true" : "false", g->gpu->present_mode_name(sc->present_mode),
-           sc->offscreen ? "true" : "false", g->hud ? "true" : "false", sc->view_extent.width, sc->view_extent.height,
-           g->frames, g->frames_warmup);
-  o += buf;
-  if (sc->refresh_ns) {
-    snprintf(buf, sizeof(buf), ",\"refresh_ms\":%.6f", sc->refresh_ns / 1e6);
-  } else {
-    snprintf(buf, sizeof(buf), ",\"refresh_ms\":null");
-  }
-  o += buf;
-  double secs = 0.0;
-  long long frames = bind_gpu_measured(g, &secs);
-  snprintf(buf, sizeof(buf), ",\"measured_frames\":%lld,\"measured_time_s\":%.6f,\"fps\":%.3f", frames, secs,
-           secs > 0 ? frames / secs : 0.0);
-  o += buf;
-  if (sc->offscreen) {
-    snprintf(buf, sizeof(buf), ",\"offscreen_presents\":%lld", g->offscreen_presents);
-  } else {
-    snprintf(buf, sizeof(buf), ",\"offscreen_presents\":null");
-  }
-  o += buf;
-  snprintf(buf, sizeof(buf), ",\"time_limit_s\":%lld,\"time_limited\":%s", (long long)(g->time_limit_ns / 1000000000),
-           g->time_limited ? "true" : "false");
-  o += buf;
-  snprintf(buf, sizeof(buf), ",\"thermal_headroom_start\":%.6f,\"thermal_headroom_end\":%.6f", g->headroom_start,
-           thermal_latest().headroom);
-  o += buf;
-  o += ",\"device_info\":" + device_info_json(g->dev);
-  o += ",\"timers\":" + timers_report_json(g->ts, &g->timers, g->gpu) + "}\n";
-  return o;
-}
-
 void bind_gpu_shutdown(GpuLua* g) {
   wait_idle(g);
   g->gpu->pass_shutdown(g->dev, &g->pass);
-  g->gpu->timers_shutdown(g->dev, &g->timers);
+  g->gpu->timers_shutdown(g->dev, &g->timers->gpu);
   g->gpu->descriptors_destroy(g->dev, &g->descriptors);
 }

@@ -1,4 +1,4 @@
-#include "lua/timers_report.h"
+#include "timers.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,28 +11,30 @@ int64_t timer_now_ns() {
       .count();
 }
 
-void timer_set_frame_begin(TimerSet* ts) {
+void timer_set_frame_begin(Timers* ts) {
   int64_t t = timer_now_ns();
-  if (ts->has_prev && !ts->skip_next) { ts->cpu_interval.push_back(t - ts->prev_frame); }
+  ts->pending_interval = ts->has_prev ? t - ts->prev_frame : -1;
   ts->has_prev = true;
-  ts->skip_next = false;
   ts->prev_frame = t;
 }
 
-void timer_set_break_interval(TimerSet* ts) {
-  ts->skip_next = true;
-  for (CpuTimerOpen& o : ts->open) { o.discard = true; }
+void timer_set_frame_end(Timers* ts, bool keep) {
+  if (keep) {
+    if (ts->pending_interval >= 0) { ts->cpu_interval.push_back(ts->pending_interval); }
+    for (const Timers::Sample& p : ts->pending) { ts->cpu[p.id].ns.push_back(p.ns); }
+  } else {
+    timer_set_break_interval(ts);
+  }
+  ts->pending.clear();
+  ts->pending_interval = -1;
 }
 
-void timer_set_clear(TimerSet* ts) {
-  for (CpuTimer& c : ts->cpu) { c.ns.clear(); }
-  for (CpuTimerOpen& o : ts->open) { o.discard = true; }
-  ts->cpu_interval.clear();
+void timer_set_break_interval(Timers* ts) {
   ts->has_prev = false;
-  ts->skip_next = false;
+  for (CpuTimerOpen& o : ts->open) { o.discard = true; }
 }
 
-std::string timer_set_close_open(TimerSet* ts) {
+std::string timer_set_close_open(Timers* ts) {
   std::string names;
   for (size_t i = 0; i < ts->open.size(); i++) {
     if (i) { names += ", "; }
@@ -87,18 +89,19 @@ static std::vector<std::string> row(const char* kind, const std::string& name, c
   return r;
 }
 
-std::string timers_report(const TimerSet* ts, const GpuTimers* gt, const GpuApiTable* gpu) {
+std::string timers_report(const Timers* t, const GpuApiTable* gpu) {
+  const GpuTimers* gt = &t->gpu;
   std::string o;
   std::vector<std::vector<std::string>> rows = {
       {"kind", "name", "n", "total", "mean", "sd", "median", "p99", "p95", "min", "max"}};
   rows.push_back(row("gpu", "busy", gpu->timers_busy(gt)));
   rows.push_back(row("gpu", "interval", gpu->timers_interval(gt)));
-  rows.push_back(row("cpu", "interval", std::vector<double>(ts->cpu_interval.begin(), ts->cpu_interval.end())));
-  for (const TimerSet::Entry& e : ts->order) {
+  rows.push_back(row("cpu", "interval", std::vector<double>(t->cpu_interval.begin(), t->cpu_interval.end())));
+  for (const Timers::Entry& e : t->order) {
     if (e.gpu) {
       rows.push_back(row("gpu", gt->user[e.id].name, gpu->timer_results(gt, e.id)));
     } else {
-      const CpuTimer& c = ts->cpu[e.id];
+      const CpuTimer& c = t->cpu[e.id];
       rows.push_back(row("cpu", c.name, std::vector<double>(c.ns.begin(), c.ns.end())));
     }
   }
@@ -140,10 +143,11 @@ std::string timers_report(const TimerSet* ts, const GpuTimers* gt, const GpuApiT
   return o;
 }
 
-std::vector<TimerRow> timer_user_rows(const TimerSet* ts, const GpuTimers* gt) {
+std::vector<TimerRow> timer_user_rows(const Timers* t) {
+  const GpuTimers* gt = &t->gpu;
   std::vector<TimerRow> out;
-  for (const TimerSet::Entry& e : ts->order) {
-    const std::string& name = e.gpu ? gt->user[e.id].name : ts->cpu[e.id].name;
+  for (const Timers::Entry& e : t->order) {
+    const std::string& name = e.gpu ? gt->user[e.id].name : t->cpu[e.id].name;
     auto it = std::find_if(out.begin(), out.end(), [&](const TimerRow& r) { return r.name == name; });
     if (it == out.end()) { it = out.insert(out.end(), TimerRow{name}); }
     (e.gpu ? it->gpu : it->cpu) = (int)e.id;
@@ -151,7 +155,8 @@ std::vector<TimerRow> timer_user_rows(const TimerSet* ts, const GpuTimers* gt) {
   return out;
 }
 
-std::vector<TimerSummary> timers_summary(const TimerSet* ts, const GpuTimers* gt, const GpuApiTable* gpu) {
+std::vector<TimerSummary> timers_summary(const Timers* t, const GpuApiTable* gpu) {
+  const GpuTimers* gt = &t->gpu;
   std::vector<TimerSummary> out;
   auto add = [&](const std::string& name, bool is_gpu, std::vector<double> v) {
     auto it = std::find_if(out.begin(), out.end(), [&](const TimerSummary& t) { return t.name == name; });
@@ -162,18 +167,57 @@ std::vector<TimerSummary> timers_summary(const TimerSet* ts, const GpuTimers* gt
   };
   add("busy", true, gpu->timers_busy(gt));
   add("interval", true, gpu->timers_interval(gt));
-  add("interval", false, std::vector<double>(ts->cpu_interval.begin(), ts->cpu_interval.end()));
-  for (const TimerRow& r : timer_user_rows(ts, gt)) {
+  add("interval", false, std::vector<double>(t->cpu_interval.begin(), t->cpu_interval.end()));
+  for (const TimerRow& r : timer_user_rows(t)) {
     if (r.gpu >= 0) { add(r.name, true, gpu->timer_results(gt, r.gpu)); }
     if (r.cpu >= 0) {
-      const CpuTimer& c = ts->cpu[r.cpu];
+      const CpuTimer& c = t->cpu[r.cpu];
       add(r.name, false, std::vector<double>(c.ns.begin(), c.ns.end()));
     }
   }
   return out;
 }
 
-static void json_row(std::string* o, const char* kind, const std::string& name, const std::vector<double>& v) {
+TimerMark timer_mark(const Timers* t, const GpuApiTable* gpu) {
+  const GpuTimers* gt = &t->gpu;
+  TimerMark m;
+  m.busy = gpu->timers_busy(gt).size();
+  m.gpu_interval = gpu->timers_interval(gt).size();
+  m.cpu_interval = t->cpu_interval.size();
+  for (uint32_t i = 0; i < gt->user.size(); i++) { m.gpu.push_back(gpu->timer_results(gt, i).size()); }
+  for (const CpuTimer& c : t->cpu) { m.cpu.push_back(c.ns.size()); }
+  return m;
+}
+
+// ends: sample count at each window end. Appends ,"series":{"mean_ms":[..],"min_ms":[..],"max_ms":[..]}.
+static void json_series(std::string* o, const std::vector<double>& v, const std::vector<size_t>& ends) {
+  std::string cols[3];
+  char buf[32];
+  size_t from = 0;
+  for (size_t i = 0; i < ends.size(); i++) {
+    const char* sep = i ? "," : "";
+    if (from >= ends[i]) {
+      for (std::string& c : cols) { c += sep + std::string("null"); }
+      continue;
+    }
+    double sum = 0, lo = v[from], hi = v[from];
+    for (size_t k = from; k < ends[i]; k++) {
+      sum += v[k];
+      lo = std::min(lo, v[k]);
+      hi = std::max(hi, v[k]);
+    }
+    double ms[3] = {sum / (ends[i] - from) / 1e6, lo / 1e6, hi / 1e6};
+    for (int c = 0; c < 3; c++) {
+      snprintf(buf, sizeof(buf), "%s%.4f", sep, ms[c]);
+      cols[c] += buf;
+    }
+    from = ends[i];
+  }
+  *o += ",\"series\":{\"mean_ms\":[" + cols[0] + "],\"min_ms\":[" + cols[1] + "],\"max_ms\":[" + cols[2] + "]}";
+}
+
+static void json_row(std::string* o, const char* kind, const std::string& name, const std::vector<double>& v,
+                     const std::vector<size_t>& ends) {
   static const char* const keys[] = {"total_ms", "mean_ms", "sd_ms",  "median_ms",
                                      "p99_ms",   "p95_ms",  "min_ms", "max_ms"};
   char buf[64];
@@ -192,20 +236,31 @@ static void json_row(std::string* o, const char* kind, const std::string& name, 
     }
     *o += buf;
   }
+  json_series(o, v, ends);
   *o += "}";
 }
 
-std::string timers_report_json(const TimerSet* ts, const GpuTimers* gt, const GpuApiTable* gpu) {
+std::string timers_report_json(const Timers* t, const GpuApiTable* gpu, const std::vector<TimerMark>& marks) {
+  const GpuTimers* gt = &t->gpu;
+  auto ends = [&](auto count) {
+    std::vector<size_t> e;
+    for (const TimerMark& m : marks) { e.push_back(count(m)); }
+    return e;
+  };
+  auto at = [](const std::vector<size_t>& v, uint32_t id) { return id < v.size() ? v[id] : 0; };
   std::string o = "[";
-  json_row(&o, "gpu", "busy", gpu->timers_busy(gt));
-  json_row(&o, "gpu", "interval", gpu->timers_interval(gt));
-  json_row(&o, "cpu", "interval", std::vector<double>(ts->cpu_interval.begin(), ts->cpu_interval.end()));
-  for (const TimerSet::Entry& e : ts->order) {
+  json_row(&o, "gpu", "busy", gpu->timers_busy(gt), ends([](const TimerMark& m) { return m.busy; }));
+  json_row(&o, "gpu", "interval", gpu->timers_interval(gt), ends([](const TimerMark& m) { return m.gpu_interval; }));
+  json_row(&o, "cpu", "interval", std::vector<double>(t->cpu_interval.begin(), t->cpu_interval.end()),
+           ends([](const TimerMark& m) { return m.cpu_interval; }));
+  for (const Timers::Entry& e : t->order) {
     if (e.gpu) {
-      json_row(&o, "gpu", gt->user[e.id].name, gpu->timer_results(gt, e.id));
+      json_row(&o, "gpu", gt->user[e.id].name, gpu->timer_results(gt, e.id),
+               ends([&](const TimerMark& m) { return at(m.gpu, e.id); }));
     } else {
-      const CpuTimer& c = ts->cpu[e.id];
-      json_row(&o, "cpu", c.name, std::vector<double>(c.ns.begin(), c.ns.end()));
+      const CpuTimer& c = t->cpu[e.id];
+      json_row(&o, "cpu", c.name, std::vector<double>(c.ns.begin(), c.ns.end()),
+               ends([&](const TimerMark& m) { return at(m.cpu, e.id); }));
     }
   }
   return o + "]";

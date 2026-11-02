@@ -16,10 +16,11 @@
 #include "ui.h"
 #include <tracy/Tracy.hpp>
 
-// --frames / --frames-warmup steps of the -/+ buttons (no text input: no soft keyboard on Android). A value from the
-// command line that is not listed steps to the nearest listed one.
-static const long long FRAME_STEPS[] = {60, 120, 300, 600, 1200, 3000, 6000, 12000};
+// --frames / --frames-warmup / time limit (s, 0 = off) steps of the -/+ buttons (no text input: no soft keyboard on
+// Android). A value from the command line that is not listed steps to the nearest listed one.
+static const long long FRAME_STEPS[] = {60, 120, 300, 600, 1200, 3000, 3600, 6000, 12000};
 static const long long WARMUP_STEPS[] = {0, 10, 30, 60, 120, 300};
+static const long long TIME_LIMIT_STEPS[] = {0, 10, 20, 30, 60, 120, 300, 600};
 
 // Frames drawn after an input event or a state change: ImGui's trickle input queue spreads a tap (pos, down, up,
 // leave) over several frames, and a click changes the layout one frame later.
@@ -31,8 +32,6 @@ constexpr int IDLE_POLL_MS = 16; // event poll period while nothing changes (pla
 constexpr const char* RELEASES_API = "https://api.github.com/repos/pplux/pxBenchy/releases/latest";
 constexpr const char* RELEASES_PAGE = "https://github.com/pplux/pxBenchy/releases/latest";
 
-constexpr long long MENU_TIME_LIMIT = 60; // seconds
-
 struct UpdateCheck {
   std::atomic<bool> done{false};
   std::string tag; // newer release's tag_name, empty when none or the check failed; written before done
@@ -40,7 +39,7 @@ struct UpdateCheck {
 
 struct Menu {
   RunOptions ro;
-  bool time_limit = true;           // each run ends after MENU_TIME_LIMIT s of measured frames
+  long long time_limit = 30;        // each run ends after this many s of measured frames, 0 = off
   bool vk13 = false;                // gpu_vk13_supported()
   float scale = 1.0f;               // platform_ui_scale()
   PlatformInsets insets;            // platform_safe_insets(), kept clear of the full-screen windows
@@ -132,12 +131,16 @@ static std::vector<std::string> table_runs(const Menu* m) {
 // needs the file: nothing is written before the user asks. Returns the path (macOS) | content:// URI (Android), "" on
 // failure.
 static std::string save_results(Menu* m, Session* s) {
-  std::string where;
-  if (!results_save(s, table_runs(m), &where)) {
+  std::string where, name;
+  if (!results_save(s, table_runs(m), &where, &name)) {
     add_status(m, "save failed (see log)");
     return "";
   }
+#if defined(__ANDROID__) // where is a content:// URI: show the file name instead
+  add_status(m, "saved Download/pxBenchy/" + name);
+#else
   add_status(m, "saved " + where);
+#endif
   printf("results: %s\n", where.c_str());
   fflush(stdout);
   return where;
@@ -328,12 +331,9 @@ static void build_settings(Menu* m, Session* s) {
     if (on) { ImGui::SameLine(); }
     if (choice(on ? "on##off" : "off##off", m->ro.offscreen == on, true, w)) { m->ro.offscreen = on; }
   }
-  row_label("Time limit", label_w);
-  for (bool on : {false, true}) {
-    if (on) { ImGui::SameLine(); }
-    if (choice(on ? "60 s##time" : "off##time", m->time_limit == on, true, w)) { m->time_limit = on; }
-  }
   float sw = 0.5f * w;
+  row_label("Time limit", label_w);
+  stepper("time", &m->time_limit, TIME_LIMIT_STEPS, sw);
   row_label("Frames", label_w);
   stepper("frames", &m->ro.frames, FRAME_STEPS, sw);
   row_label("Warm-up", label_w);
@@ -343,9 +343,10 @@ static void build_settings(Menu* m, Session* s) {
 static void build_scripts(Menu* m) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Scripts");
-  same_line_if_fits("Run all");
+  const char* run_all = m->vk13 ? "Run all (1.1 + 1.3)" : "Run all";
+  same_line_if_fits(run_all);
   ImGui::BeginDisabled(m->scripts.empty());
-  if (ImGui::Button("Run all")) { m->action = Menu::Action::run_all; }
+  if (ImGui::Button(run_all)) { m->action = Menu::Action::run_all; }
   ImGui::EndDisabled();
   if (m->scripts.empty()) { ImGui::TextDisabled("no scripts/*.lua found"); }
   for (size_t i = 0; i < m->scripts.size(); i++) {
@@ -493,12 +494,27 @@ static void build_menu(Menu* m, Session* s) {
 static RunResult run_one(Menu* m, Session* s, const std::string& script) {
   RunOptions ro = m->ro;
   ro.script = script;
-  ro.time_limit = m->time_limit ? MENU_TIME_LIMIT : 0;
+  ro.time_limit = m->time_limit;
   RunResult r = run_script(s, ro);
   print_result(r);
   set_status(m, r);
   if (!r.quit) { m->results.push_back(r); }
   return r;
+}
+
+// Recreates the device with api / validation (session_switch); status and header updated. False on failure.
+static bool switch_device(Menu* m, Session* s, GpuApi api, bool val) {
+  printf("menu: switch to vulkan %s, validation %s\n", gpu_api_name(api), val ? "on" : "off");
+  fflush(stdout);
+  bool ok = session_switch(s, api, val);
+  if (ok) {
+    m->status = std::string("vulkan ") + gpu_api_name(api) + (val ? ", validation on" : ", validation off");
+  } else {
+    m->status = std::string("switch to vulkan ") + gpu_api_name(api) + " failed (see log)";
+  }
+  // also after a failed switch: the previous device may be restored, or none is up
+  m->device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
+  return ok;
 }
 
 // Runs the action chosen in the last frame; the device is idle (session_ui_frame).
@@ -509,29 +525,35 @@ static void run_action(Menu* m, Session* s) {
     case Menu::Action::validation: {
       GpuApi api = m->action == Menu::Action::vulkan ? m->want_api : s->api;
       bool val = m->action == Menu::Action::validation ? m->want_validation : s->validation;
-      printf("menu: switch to vulkan %s, validation %s\n", gpu_api_name(api), val ? "on" : "off");
-      fflush(stdout);
-      if (session_switch(s, api, val)) {
-        m->status = std::string("vulkan ") + gpu_api_name(api) + (val ? ", validation on" : ", validation off");
-      } else {
-        m->status = std::string("switch to vulkan ") + gpu_api_name(api) + " failed (see log)";
-      }
-      // also after a failed switch: the previous device may be restored, or none is up
-      m->device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
+      switch_device(m, s, api, val);
       break;
     }
     case Menu::Action::run: run_one(m, s, m->scripts[m->run_index]); break;
     case Menu::Action::run_all: {
-      size_t runs = 0;
-      while (runs < m->scripts.size()) {
-        printf("menu: run all %zu/%zu %s\n", runs + 1, m->scripts.size(), m->scripts[runs].c_str());
-        fflush(stdout);
-        RunResult r = run_one(m, s, m->scripts[runs++]);
-        if (r.quit || r.stopped) { break; }
+      // every script on 1.1, then every script on 1.3 (when supported); back to the starting api at the end
+      std::vector<GpuApi> apis = {GpuApi::vk11};
+      if (m->vk13) { apis.push_back(GpuApi::vk13); }
+      GpuApi start = s->api;
+      size_t total = apis.size() * m->scripts.size(), runs = 0;
+      bool stop = false;
+      for (GpuApi api : apis) {
+        if (s->api != api && !switch_device(m, s, api, s->validation)) { break; }
+        for (const std::string& script : m->scripts) {
+          printf("menu: run all %zu/%zu vulkan %s %s\n", runs + 1, total, gpu_api_name(api), script.c_str());
+          fflush(stdout);
+          RunResult r = run_one(m, s, script);
+          runs++;
+          stop = r.quit || r.stopped;
+          if (stop) { break; }
+        }
+        if (stop) { break; }
       }
-      if (runs < m->scripts.size() && !s->quit) {
-        m->status += "  (run all stopped after " + std::to_string(runs) + ")";
+      std::string done = m->status;
+      if (!s->quit && s->api != start) {
+        switch_device(m, s, start, s->validation);
+        m->status = done + "  " + m->status;
       }
+      if (runs < total && !s->quit) { m->status += "  (run all stopped after " + std::to_string(runs) + ")"; }
       break;
     }
     case Menu::Action::clear: m->results.clear(); break;

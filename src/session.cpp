@@ -8,9 +8,7 @@
 #include "device_info.h"
 #include "platform/platform.h"
 #include "platform/thermal.h"
-#include "lua/vm.h"
-#include "lua/bind_pxb.h"
-#include "lua/timers_report.h"
+#include "run.h"
 #include <imgui.h>
 #include <tracy/Tracy.hpp>
 
@@ -129,12 +127,12 @@ static bool session_swapchain(Session* s, bool offscreen, bool readable) {
 static uint32_t session_events(Session* s, uint32_t ev);
 
 // Between two frames of a run (the script yielded in gpu.present): window events (swapchain / surface recreated), the
-// background pause, Back / quit and the time limit. False ends the run, res says why (nothing set: failure).
-static bool run_between_frames(Session* s, GpuLua* g, const RunOptions& ro, RunResult* res) {
+// background pause, Back / quit. False ends the run, res says why (nothing set: failure).
+static bool run_between_frames(Session* s, Run* r, const RunOptions& ro, RunResult* res) {
   uint32_t ev = platform_pump();
   bool hidden = !platform_visible();
   if (hidden || (ev & (PXB_EV_SURFACE_LOST | PXB_EV_RESIZED)) || s->sc.needs_recreate) {
-    bind_gpu_wait_idle(g); // the swapchain or surface may go
+    run_wait_idle(r); // the swapchain or surface may go
   }
   ev = session_events(s, ev);
   if (s->sc_ready && s->sc.needs_recreate) { swapchain_drop(s); }
@@ -144,7 +142,7 @@ static bool run_between_frames(Session* s, GpuLua* g, const RunOptions& ro, RunR
     int64_t t0 = timer_now_ns();
     ev |= session_wait_visible(s);
     int64_t ns = timer_now_ns() - t0;
-    bind_gpu_paused(g, ns);
+    run_paused(r, ns);
     printf("run: resumed after %.1f s (excluded from the measurement)\n", ns / 1e9);
     fflush(stdout);
   }
@@ -159,15 +157,11 @@ static bool run_between_frames(Session* s, GpuLua* g, const RunOptions& ro, RunR
     return false;
   }
   if (!s->sc_ready) {
-    bind_gpu_swapchain_recreated(g);
+    run_swapchain_recreated(r);
     if (!session_swapchain(s, ro.offscreen, !ro.screenshot.empty())) {
       fprintf(stderr, "error: swapchain recreation failed\n");
       return false;
     }
-  }
-  if (ro.time_limit && bind_gpu_measured_ns(g) >= ro.time_limit * 1000000000LL) {
-    res->time_limited = g->time_limited = true;
-    return false;
   }
   return true;
 }
@@ -182,47 +176,15 @@ RunResult run_script(Session* s, const RunOptions& ro) {
     fprintf(stderr, "error: no device (failed vulkan switch)\n");
     return res;
   }
-  GpuLua script;
-  TimerSet ts;
+  Run r;
   bool sc_ok = session_swapchain(s, ro.offscreen, !ro.screenshot.empty());
-  if (sc_ok && bind_gpu_init(&script, s->api, &s->dev, &s->sc, &s->ui, &ts, ro.frames, ro.frames_warmup, ro.hud)) {
-    lua_State* L = vm_create();
-    if (L) {
-      bind_gpu_register(L, &script);
-      bind_pxb_register(L, &ts, ro.frames, ro.frames_warmup);
-    }
-    script.path = ro.script;
-    script.screenshot = ro.screenshot;
-    script.screenshot_frame = ro.screenshot_frame;
-    script.time_limit_ns = ro.time_limit * 1000000000LL;
+  if (sc_ok && run_init(&r, ro, s->api, &s->dev, &s->sc, &s->ui)) {
     // the frame loop: the script yields at each gpu.present
-    VmState st = L ? vm_start(L, ro.script) : VmState::error;
-    while (st == VmState::yield && !script.screenshot_taken && run_between_frames(s, &script, ro, &res)) {
-      st = vm_resume(L);
-    }
-    res.ok = st == VmState::done || (st == VmState::yield && (script.screenshot_taken || res.time_limited));
-    bind_gpu_finish(&script);
-    if (res.ok && !ro.screenshot.empty() && !script.screenshot_taken) {
-      fprintf(stderr, "error: --screenshot: script ended before frame %lld\n", ro.screenshot_frame);
-      res.ok = false;
-    }
-    if (!script.screenshot_taken) { // screenshot runs end without a report
-      res.text = timers_report(&ts, &script.timers, s->gpu) + bind_gpu_report(&script);
-      res.json = bind_gpu_report_json(&script, ro.script.c_str());
-      double secs = 0.0;
-      res.frames = bind_gpu_measured(&script, &secs);
-      res.fps = secs > 0 ? res.frames / secs : 0.0;
-      res.timers = timers_summary(&ts, &script.timers, s->gpu);
-    }
-    // stopped by the app inside gpu.present (Back, quit, time limit, screenshot): timers the script keeps open across
-    // gpu.present are expected, close them quietly (the Lua state's sentinel warns only for scripts that end with one)
-    if (st == VmState::yield) { timer_set_close_open(&ts); }
-    vm_destroy(L);
-    bind_gpu_shutdown(&script);
+    bool active = run_active(&r);
+    while (active && run_between_frames(s, &r, ro, &res)) { active = run_step(&r); }
+    run_result(&r, &res);
+    run_shutdown(&r);
   } else {
-    if (sc_ok) {
-      bind_gpu_shutdown(&script); // timers_init failed: frees what it created
-    }
     fprintf(stderr, "error: swapchain setup failed\n");
   }
   // Touches during the run (HUD frames ignore them; with --no-hud or offscreen they stay queued) must not click in the
@@ -325,7 +287,7 @@ std::string results_json(const Session* s, const std::vector<std::string>& runs)
   return out;
 }
 
-bool results_save(const Session* s, const std::vector<std::string>& runs, std::string* where) {
+bool results_save(const Session* s, const std::vector<std::string>& runs, std::string* where, std::string* name) {
   bool any = false;
   for (const std::string& r : runs) { any = any || !r.empty(); }
   if (!any) {
@@ -343,5 +305,6 @@ bool results_save(const Session* s, const std::vector<std::string>& runs, std::s
   localtime_r(&t, &lt);
   char stamp[32];
   strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &lt);
-  return platform_save_results(model + "-" + stamp + ".json", results_json(s, runs), where);
+  *name = model + "-" + stamp + ".json";
+  return platform_save_results(*name, results_json(s, runs), where);
 }

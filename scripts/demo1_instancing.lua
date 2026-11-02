@@ -94,9 +94,13 @@ void main() {
 local push = {view_proj = view_proj, light_dir = light_dir, eye = eye, scale = {1, 1, 1}, color = {0.8, 0.55, 0.3}}
 local big_push = {view_proj = view_proj, light_dir = light_dir, eye = eye,
   scale = {big_scale, big_scale, big_scale}, color = {0.8, 0.05, 0.05}}
+-- "frame": a frame body and its gpu.present, stopped at the start of the next body (the first sample, in frame 1, is
+-- warm-up)
 local cpu_frame = pxb.cpu_timer("frame")
 local gpu_pass = gpu.timer("pass") -- whole pass: inside a pass, timestamps are not meaningful on tiled GPUs
+cpu_frame:start()
 local function frame()
+  cpu_frame:stop()
   cpu_frame:start()
   gpu_pass:start()
   gpu.begin_pass{clear = {0.05, 0.05, 0.1, 1}, depth = true}
@@ -106,9 +110,6 @@ local function frame()
     count = c.index_count, instances = 1, push = big_push}
   gpu.end_pass()
   gpu_pass:stop()
-  gpu.present()
-  cpu_frame:stop()
 end
 
-local total = pxb.args.frames_warmup + pxb.args.frames -- --frames 0 = run until the window is closed
-for i = 1, pxb.args.frames == 0 and math.maxinteger or total do frame() end
+repeat frame() until not gpu.present()

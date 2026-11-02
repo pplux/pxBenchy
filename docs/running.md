@@ -14,14 +14,14 @@ Without a script the app opens the menu (below); `--vulkan`, `--validation`,
 |---|---|---|
 | `--validation` | off | enable the Vulkan validation layer (with synchronization validation); use while developing a script, leave off for numbers. Not in Release builds |
 | `--vulkan auto\|1.1\|1.3` | auto | Vulkan path: 1.1 core (render passes, sync1) or 1.3 (dynamic rendering, synchronization2). `auto` probes the Vulkan driver at startup (temporary instance, no validation) and picks 1.3 when a device has 1.3 + dynamicRendering + synchronization2, else 1.1. An explicit 1.3 on a device without them fails: no fallback, exits 1. The resolved path is shown as `vulkan=` on the startup line (`vulkan=1.3 (auto)` when probed), `vkX.Y` on the HUD, in the `run:` line and as `"vulkan"` in the JSON report |
-| `--frames N` | 6000 | measured frames (`pxb.args.frames`); 0 = run until the window closes |
-| `--frames-warmup N` | 60 | frames before timers are cleared (`pxb.args.frames_warmup`) |
+| `--frames N` | 3600 | measured frames; 0 = run until the window closes |
+| `--frames-warmup N` | 60 | frames left out of the stats before measuring, minimum 1: frame 1, the setup frame, is always warm-up. The run ends after `--frames-warmup` + `--frames` presents |
 | `--time-limit S` | 0 (off) | end the run normally (with the report) after S seconds of measured frames (after warm-up); the report says `time limit: S s reached`. Script runs only: the menu has its own setting |
 | `--no-hud` | HUD on | no on-screen stats |
 | `--offscreen` | off | render to an own image, no vsync; about once per second the last frame is copied to the screen. The intervals spanning a copy and the frame right after it are left out of the timer stats (on Android the compositor's work on the new image slows that frame: Pixel 9 +20 ms); fps still includes them |
 | `--json` | off | print the report as one JSON line |
 | `--screenshot file.png` | off | save frame `--screenshot-frame` as an RGBA8 PNG (scene only, no HUD, view orientation), print `screenshot: path (frame N, WxH)` and exit 0 without a report; error (exit 1) if the script ends first. Android: use an app-writable absolute path |
-| `--screenshot-frame N` | 1 | 1-based frame (HUD frame number) to capture; a skipped frame moves it to the next one drawn |
+| `--screenshot-frame N` | 1 | 1-based frame (HUD frame number) to capture; frames the swapchain cannot provide (resize, minimized) are not drawn or counted |
 | `--vulkan-info` | off | print the Vulkan info (see [Vulkan info](#vulkan-info)) and exit 0; no window, other options ignored |
 
 ## Menu
@@ -32,15 +32,17 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
 
 - Vulkan 1.1 / 1.3 (initial: as `--vulkan auto`; 1.3 greyed out when the probe finds no 1.3 device) and validation
   on / off (not in Release builds): each change recreates the device (prints a new `device:` line).
-- Offscreen on / off (starts on); frames and warm-up with -/+ buttons over fixed steps (frames 60 .. 12000, warm-up 0 .. 300).
-- Time limit off / 60 s (starts on): every run (a script's Run button and each script of "Run all") ends
-  normally after 60 s of measured frames (as `--time-limit 60`). Cut runs show `(time limit)` in Results.
+- Offscreen on / off (starts on); frames and warm-up with -/+ buttons over fixed steps (frames 60 .. 12000, warm-up 0 .. 300; 0 runs as 1).
+- Time limit in seconds with -/+ buttons (0 = off, 10 .. 600, starts at 30): every run (a script's Run button and each
+  script of "Run all") ends normally after that many seconds of measured frames (as `--time-limit S`). Cut runs show
+  `(time limit)` in Results.
 - Scripts: every `scripts/*.lua` with its own Run button; "Run all" runs every one of them
-  in name order with the same options, back to back; Back during a script stops the remaining ones.
+  in name order with the same options, back to back, on Vulkan 1.1 and then on 1.3 (button "Run all (1.1 + 1.3)"; 1.1
+  only without a 1.3 device), then switches back to the selected Vulkan; Back during a script stops the remaining ones.
 - Results: one row per run (script, vulkan, `val` / `off` options, fps, median gpu busy and cpu frame interval in ms),
-  kept for the app session in run order ("Run all" adds one row per script). Tap a row for the median of each
+  kept for the app session in run order ("Run all" adds one row per script and Vulkan). Tap a row for the median of each
   timer. Clear empties the table. Save saves every run in the table. The status line shows the path (macOS)
-  or `content://` URI (Android).
+  or `Download/pxBenchy/<name>` (Android).
 - Share JSON, Share text, Copy: send the table's results JSON (disabled while the table is empty). Copy and Share
   text write no file; Share JSON saves the table to a new file and shares it. Android: Share JSON opens the share sheet with the JSON file
   (`application/json`, subject `pxBenchy results <model>`; mail, Slack, Drive, ...); Share text opens it with the
@@ -58,6 +60,10 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
   from the measurement)`): intervals spanning the pause are dropped, measured time and `--time-limit` leave it out.
 
 Back or Escape during a command-line run stops it the same way (report printed, exit 1).
+
+However a run ends (frames done, time limit, screenshot, Back, quit), the script is resumed once more with
+`gpu.present()` returning false and no frame open, so it leaves its loop, runs its cleanup and returns (not measured;
+see `gpu.present` in [lua-api.md](lua-api.md)).
 
 ## Desktop (macOS)
 
@@ -124,8 +130,16 @@ At the end of the run, one row per timer, gpu rows first, then cpu, by name:
 - `run: vulkan V, N frames in T s = F fps, display H Hz (refresh X ms)`: the `--vulkan` path, measured frames (after
   warm-up), their wall time, the resulting fps and the display refresh rate reported by the device (`display -` when
   unknown). Under FIFO, frames lost to vsync can be estimated as `T * H - N`.
-- `offscreen presents` (with `--offscreen`), `time limit: S s reached` (when `--time-limit` ended the run), and the thermal headroom at the start and end of the measured frames
-  (Android: 1.0 = severe throttling; 0 where unsupported).
+- `offscreen presents` (with `--offscreen`), `time limit: S s reached` (when `--time-limit` ended the run),
+  `frames unavailable: N` (when N > 0: frames the swapchain could not provide, e.g. during a resize; not drawn, the
+  intervals around them excluded), and
+  `thermal: headroom start S end E max M, status max NAME, battery B C` over the 1 s windows below (start = end of
+  the first window; headroom 0 where unsupported; battery read once, at the end of the run).
+
+The measured frames are split into 1 s wall windows (the last one ends with the run, shorter). Each window records its
+presents, the thermal state at its end and, per timer, the samples that arrived in it (GPU results arrive a few frames
+late, so a window can hold a frame or two of the previous one). The HUD shows the last completed window: fps, and the
+mean of `gpu busy` and of each user timer.
 
 The HUD shows the thermal headroom, status and battery temperature. Headroom (Android, `AThermal_getThermalHeadroom`):
 0 = no throttling, 1.0 = severe throttling, above 1 beyond it. Status, as a word on the HUD and as its number in
@@ -141,7 +155,11 @@ does not allow it) sampled once per second.
 `--json` prints the same data as one JSON line: run settings (`script`, `vulkan`,
 `validation`, `present_mode`, `offscreen`, `hud`, `extent`, `frames`, `frames_warmup`, `refresh_ms`), the measured
 `measured_frames`, `measured_time_s`, `fps`, `offscreen_presents`, `time_limit_s` (0 = off) / `time_limited`
-(the limit ended the run), `thermal_headroom_start` / `_end`, and `timers`.
+(the limit ended the run), `frames_unavailable`, `battery_c` (once, at the end of the run: it barely moves during one; 0 where
+unsupported), `series` and `timers`. `series` has one value per 1 s window: `t_s` (window end, s since
+measuring began), `frames` (presents in the window; they add up to `measured_frames`), `thermal_headroom`,
+`thermal_status` (at the window end, 0 where unsupported). Each `timers` row has the run stats plus its
+own `series`: `mean_ms`, `min_ms`, `max_ms` per window (null when the window has no sample).
 `device` is the Vulkan device name (kept for compatibility); `device_info` describes the device, driver and build:
 
 | Field | Source |
@@ -177,6 +195,14 @@ The menu's Save and Share JSON write one JSON file, every run of the table in ru
 report of each run, as printed by `--json`, each with its own `device_info` (a table with 1.1 and 1.3 runs keeps the
 right `api_version` per run). `vulkan` is the Vulkan info below, queried once at startup. Runs without a report (the
 run could not start) are left out. Single-script runs (command line, adb) write no file.
+
+`tools/report.py <dir> [-o report.html]` (Python 3, no dependencies) reads every result file under `<dir>` and writes
+one self-contained HTML page (default `<dir>/report.html`): devices overview, per-device Vulkan info (vk11 and vk13
+instances in one view: a 1.1 / 1.3 badge marks a section or row only one has, a value that differs shows `a [1.1] / b
+[1.3]`) with runs (click one: a modal with its timers and `series` charts: thermal headroom over status bands, per-timer
+mean with min-max band, peak status tag when above none / nominal; hovering one chart shows that window's values in all
+of them) and a script x device fps table. Files are grouped per device (os, manufacturer, model, GPU name); the newest
+file's Vulkan info is kept, every run is listed.
 
 ### Vulkan info
 

@@ -211,3 +211,13 @@ VmState vm_resume(lua_State* L) {
 void vm_destroy(lua_State* L) {
   if (L) { lua_close(L); }
 }
+
+std::string vm_caller(lua_State* L, int* line) {
+  lua_Debug ar;
+  if (!lua_getstack(L, 1, &ar) || !lua_getinfo(L, "Sl", &ar)) {
+    *line = 0;
+    return "?";
+  }
+  *line = ar.currentline;
+  return ar.source[0] == '@' ? ar.source + 1 : ar.short_src; // "@path": a file chunk
+}

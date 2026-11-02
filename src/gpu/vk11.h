@@ -30,7 +30,6 @@ using vkc::layout_build;
 using vkc::layout_field_is_int;
 using vkc::layout_pack;
 using vkc::layout_pack_u32;
-using vkc::pass_shutdown;
 using vkc::pipeline_destroy;
 using vkc::present_mode_name;
 using vkc::screenshot_destroy;
@@ -112,6 +111,9 @@ bool pipeline_create(GpuDevice* dev, const GpuPipelineDesc& desc, GpuPipeline* o
 bool pass_begin(GpuDevice* dev, GpuSwapchain* sc, GpuPassCtx* ctx, VkCommandBuffer cmd, const GpuPassDesc& desc);
 // Fails (prints) outside a pass.
 bool pass_end(GpuPassCtx* ctx);
+// Destroys the depth texture with vk11::texture_destroy, forgetting its cached framebuffers (vkc's would leave them
+// cached: a later depth view with the same handle would hit a framebuffer on the destroyed view). Device must be idle.
+void pass_shutdown(GpuDevice* dev, GpuPassCtx* ctx);
 
 // Waits the frame slot, acquires an image, begins the command buffer and transitions the image to
 // COLOR_ATTACHMENT_OPTIMAL. Offscreen: no acquire (the frame renders into offscreen_tex). Returns false (no frame) when

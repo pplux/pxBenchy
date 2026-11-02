@@ -105,11 +105,14 @@ local function draw_floor()
     count = c.index_count, instances = 1, push = big_push}
 end
 
--- one frame of a mode: timers "frame <name>" (CPU) and "pass <name>" (GPU); before() runs inside the timers, before
--- the pass (uploads); body() draws the grid inside the pass, then the floor is drawn
+-- one frame of a mode: timers "frame <name>" (CPU: a frame body and its gpu.present, stopped at the start of the next
+-- body; the first sample, in frame 1, is warm-up) and "pass <name>" (GPU); before() runs inside the timers, before the
+-- pass (uploads); body() draws the grid inside the pass, then the floor is drawn
 local function make_frame(name, body, before)
   local cpu, pass = pxb.cpu_timer("frame " .. name), gpu.timer("pass " .. name)
+  cpu:start()
   return function()
+    cpu:stop()
     cpu:start()
     pass:start()
     if before then
@@ -122,17 +125,14 @@ local function make_frame(name, body, before)
     draw_floor()
     gpu.end_pass()
     pass:stop()
-    gpu.present()
-    cpu:stop()
   end
 end
 
--- runs frame() --frames-warmup + --frames times; --frames 0 = until the window closes
+-- runs frame() until the run ends (--frames-warmup + --frames presents; --frames 0 = until the window closes)
 local function run(frame)
-  local total = pxb.args.frames_warmup + pxb.args.frames
-  for _ = 1, pxb.args.frames == 0 and math.maxinteger or total do
+  repeat
     frame()
-  end
+  until not gpu.present()
 end
 
 return {m = m, N = N, CMD = CMD, vb = vb, ib = ib, inst = inst, pipe = pipe, push = push, make_frame = make_frame,

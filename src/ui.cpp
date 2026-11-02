@@ -2,7 +2,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <imgui.h>
-#include "lua/timers_report.h"
+#include "timers.h"
 
 const char* path_base_name(const std::string& path) {
   size_t slash = path.find_last_of("/\\");

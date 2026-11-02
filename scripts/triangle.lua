@@ -31,11 +31,9 @@ void main() {
   cull = "none",
 })
 
-local total = pxb.args.frames_warmup + pxb.args.frames -- --frames 0 = run until the window is closed
-for i = 1, pxb.args.frames == 0 and math.maxinteger or total do
+repeat
   gpu.begin_pass{clear = {0.05, 0.05, 0.1, 1}}
   gpu.draw{pipeline = pipe, vertex_buffers = {vb}, index_buffer = ib, index_type = "u16",
     count = 3, instances = 1}
   gpu.end_pass()
-  gpu.present()
-end
+until not gpu.present()

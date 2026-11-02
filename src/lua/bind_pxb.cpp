@@ -8,7 +8,8 @@
 #include <vector>
 #include "asset/gltf.h"
 #include "lua/bind_math.h"
-#include "lua/timers_report.h"
+#include "lua/vm.h"
+#include "timers.h"
 #include "platform/platform.h"
 extern "C" {
 #include <lua.h>
@@ -137,7 +138,7 @@ static int read_file_impl(lua_State* L, const char* path) {
 
 static int l_read_file(lua_State* L) { return read_file_impl(L, luaL_checkstring(L, 1)); }
 
-// CPU timers: objects are full userdata holding an index, data lives in the TimerSet (outlives the Lua state). A
+// CPU timers: objects are full userdata holding an index, data lives in the Timers (outlives the Lua state). A
 // sentinel userdata (anchored in the registry) closes Tracy zones of timers left open at lua_close (__gc).
 static const char* const CPU_TIMER_MT = "pxb.cpu_timer";
 
@@ -145,14 +146,14 @@ struct CpuTimerUD {
   uint32_t id;
 };
 
-static TimerSet* timer_set(lua_State* L) { return *(TimerSet**)lua_touserdata(L, lua_upvalueindex(1)); }
+static Timers* timer_set(lua_State* L) { return *(Timers**)lua_touserdata(L, lua_upvalueindex(1)); }
 
 static int l_cpu_time(lua_State* L) {
   lua_pushinteger(L, (lua_Integer)timer_now_ns());
   return 1;
 }
 
-static int cpu_timer_impl(lua_State* L, TimerSet* ts, const char* name, Err* e) {
+static int cpu_timer_impl(lua_State* L, Timers* ts, const char* name, Err* e) {
   for (const CpuTimer& c : ts->cpu) {
     if (c.name == name) { return fail(e, "timer '%s' already exists", name); }
   }
@@ -161,13 +162,15 @@ static int cpu_timer_impl(lua_State* L, TimerSet* ts, const char* name, Err* e) 
 #ifdef TRACY_ENABLE
   // Tracy may read source locations until process exit: stable storage, never freed
   struct Loc {
-    std::string name;
+    std::string name, file;
     ___tracy_source_location_data data;
   };
   static std::deque<Loc>* locs = new std::deque<Loc>();
   Loc& l = locs->emplace_back();
+  int line = 0;
   l.name = name;
-  l.data = {l.name.c_str(), "pxb.cpu_timer", __FILE__, __LINE__, 0};
+  l.file = vm_caller(L, &line); // the script line that created the timer
+  l.data = {l.name.c_str(), "pxb.cpu_timer", l.file.c_str(), (uint32_t)line, 0};
   c.loc = &l.data;
 #endif
   ts->cpu.push_back(std::move(c));
@@ -188,7 +191,7 @@ static int l_cpu_timer(lua_State* L) {
 
 static int cpu_timer_start(lua_State* L) {
   uint32_t id = ((CpuTimerUD*)luaL_checkudata(L, 1, CPU_TIMER_MT))->id;
-  TimerSet* ts = timer_set(L);
+  Timers* ts = timer_set(L);
   CpuTimerOpen o = {id, 0, false, {}};
 #ifdef TRACY_ENABLE
   o.zone = ___tracy_emit_zone_begin((const ___tracy_source_location_data*)ts->cpu[id].loc, 1);
@@ -198,7 +201,7 @@ static int cpu_timer_start(lua_State* L) {
   return 0;
 }
 
-static int cpu_timer_stop_impl(TimerSet* ts, uint32_t id, Err* e) {
+static int cpu_timer_stop_impl(Timers* ts, uint32_t id, Err* e) {
   int64_t t1 = timer_now_ns();
   const char* name = ts->cpu[id].name.c_str();
   bool is_open = false;
@@ -212,7 +215,7 @@ static int cpu_timer_stop_impl(TimerSet* ts, uint32_t id, Err* e) {
 #ifdef TRACY_ENABLE
   ___tracy_emit_zone_end(top.zone);
 #endif
-  if (!top.discard) { ts->cpu[id].ns.push_back(t1 - top.t0); }
+  if (!top.discard) { ts->pending.push_back({id, t1 - top.t0}); } // committed or dropped at its frame end
   ts->open.pop_back();
   return 0;
 }
@@ -236,7 +239,7 @@ static int cpu_timer_results(lua_State* L) {
 }
 
 static int sentinel_gc(lua_State* L) {
-  TimerSet* ts = *(TimerSet**)lua_touserdata(L, 1);
+  Timers* ts = *(Timers**)lua_touserdata(L, 1);
   std::string names = timer_set_close_open(ts);
   if (!names.empty()) {
     printf("warning: pxb timers still open: %s\n", names.c_str());
@@ -245,14 +248,14 @@ static int sentinel_gc(lua_State* L) {
   return 0;
 }
 
-void bind_pxb_register(lua_State* L, TimerSet* ts, long long frames, long long frames_warmup) {
+void bind_pxb_register(lua_State* L, Timers* ts) {
   lua_createtable(L, 0, 4);
   lua_pushcfunction(L, l_load_glb);
   lua_setfield(L, -2, "load_glb");
   lua_pushcfunction(L, l_load_image);
   lua_setfield(L, -2, "load_image");
 
-  TimerSet** sentinel = (TimerSet**)lua_newuserdatauv(L, sizeof(TimerSet*), 0);
+  Timers** sentinel = (Timers**)lua_newuserdatauv(L, sizeof(Timers*), 0);
   *sentinel = ts;
   lua_createtable(L, 0, 1);
   lua_pushcfunction(L, sentinel_gc);
@@ -278,12 +281,5 @@ void bind_pxb_register(lua_State* L, TimerSet* ts, long long frames, long long f
   lua_setfield(L, -2, "read_file");
   bind_math_push(L);
   lua_setfield(L, -2, "math");
-
-  lua_createtable(L, 0, 2);
-  lua_pushinteger(L, frames);
-  lua_setfield(L, -2, "frames");
-  lua_pushinteger(L, frames_warmup);
-  lua_setfield(L, -2, "frames_warmup");
-  lua_setfield(L, -2, "args");
   lua_setglobal(L, "pxb");
 }

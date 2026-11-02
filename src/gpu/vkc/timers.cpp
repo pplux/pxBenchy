@@ -44,16 +44,17 @@ void timers_shutdown(GpuDevice* dev, GpuTimers* t) {
 
 static double to_ns(const GpuTimers* t, uint64_t a, uint64_t b) { return double((b - a) & t->mask) * t->period_ns; }
 
-void timers_break_interval(GpuTimers* t) {
-  if (t->enabled && !t->cmd && t->slots[t->cur].ended) { t->slots[t->cur].break_interval = true; }
-}
-
-void timers_drop_frame(GpuTimers* t) {
+// Moves the just ended frame's measure forward to m (never back: a dropped frame stays dropped).
+static void measure_at_least(GpuTimers* t, GpuFrameMeasure m) {
   if (t->enabled && !t->cmd && t->slots[t->cur].ended) {
-    t->slots[t->cur].drop = true;
-    t->slots[t->cur].break_interval = true;
+    GpuFrameMeasure& s = t->slots[t->cur].measure;
+    s = std::max(s, m);
   }
 }
+
+void timers_break_interval(GpuTimers* t) { measure_at_least(t, GpuFrameMeasure::break_interval); }
+
+void timers_drop_frame(GpuTimers* t) { measure_at_least(t, GpuFrameMeasure::drop); }
 
 void timers_resolve_all(GpuDevice* dev, GpuTimers* t) {
   if (!t->enabled) { return; }
@@ -71,7 +72,7 @@ void timers_clear(GpuTimers* t) {
   for (GpuUserTimer& u : t->user) { u.ns.clear(); }
 }
 
-uint32_t timer_create(GpuTimers* t, const char* name) {
+uint32_t timer_create(GpuTimers* t, const char* name, const char* file, uint32_t line) {
   for (const GpuUserTimer& u : t->user) {
     if (u.name == name) { return UINT32_MAX; }
   }
@@ -80,13 +81,14 @@ uint32_t timer_create(GpuTimers* t, const char* name) {
 #ifdef TRACY_ENABLE
   // Tracy may read source locations until process exit: stable storage, never freed
   struct Loc {
-    std::string name;
+    std::string name, file;
     tracy::SourceLocationData data;
   };
   static std::deque<Loc>* locs = new std::deque<Loc>();
   Loc& l = locs->emplace_back();
   l.name = name;
-  l.data = {l.name.c_str(), "gpu.timer", __FILE__, __LINE__, 0};
+  l.file = file;
+  l.data = {l.name.c_str(), "gpu.timer", l.file.c_str(), line, 0};
   u.loc = &l.data;
 #endif
   t->user.push_back(std::move(u));
@@ -104,8 +106,7 @@ namespace vkc::part {
 void timers_resolve_slot(GpuDevice* dev, GpuTimers* t, GpuTimerSlot* s) {
   if (!s->pending) { return; }
   s->pending = false;
-  bool drop = s->drop;
-  s->drop = false;
+  bool drop = s->measure == GpuFrameMeasure::drop;
   if (!s->ended) { return; }
   uint64_t d[2 * PXB_TIMER_QUERIES]; // value, availability
   VkResult r =
@@ -117,8 +118,8 @@ void timers_resolve_slot(GpuDevice* dev, GpuTimers* t, GpuTimerSlot* s) {
   }
   if (d[1]) { // frame start available
     if (d[3] && !drop) { t->busy_ns.push_back(to_ns(t, d[0], d[2])); }
-    if (t->has_prev) { t->interval_ns.push_back(to_ns(t, t->prev_start, d[0])); }
-    t->has_prev = !s->break_interval;
+    if (t->has_prev && !drop) { t->interval_ns.push_back(to_ns(t, t->prev_start, d[0])); }
+    t->has_prev = s->measure == GpuFrameMeasure::keep;
     t->prev_start = d[0];
   }
   for (const GpuTimerRecord& rec : s->records) {

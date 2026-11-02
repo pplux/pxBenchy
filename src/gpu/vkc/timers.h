@@ -10,15 +10,16 @@ void timers_shutdown(GpuDevice* dev, GpuTimers* t); // destroys pools; device mu
 
 // After frame_end (offscreen blit submitted next): the interval from that frame to the next one is dropped.
 void timers_break_interval(GpuTimers* t);
-// After frame_end: that frame's busy and user timer results are dropped, and the interval to the next frame.
+// After frame_end: that frame's busy and user timer results are dropped, and the intervals into it and to the next
+// frame.
 void timers_drop_frame(GpuTimers* t);
 // Resolves every pending slot in frame order; call after vkDeviceWaitIdle.
 void timers_resolve_all(GpuDevice* dev, GpuTimers* t);
 void timers_clear(GpuTimers* t); // drops accumulated results (frame and user timers), next interval starts over
 
-// Creates user timer `name` (also a Tracy GPU zone), works when timers are disabled. Returns its index, or UINT32_MAX
-// when the name exists.
-uint32_t timer_create(GpuTimers* t, const char* name);
+// Creates user timer `name` (also a Tracy GPU zone at file:line, where the script created it), works when timers are
+// disabled. Returns its index, or UINT32_MAX when the name exists.
+uint32_t timer_create(GpuTimers* t, const char* name, const char* file, uint32_t line);
 
 const std::vector<double>& timers_busy(const GpuTimers* t);                // ns per frame
 const std::vector<double>& timers_interval(const GpuTimers* t);            // ns per frame

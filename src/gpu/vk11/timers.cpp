@@ -28,7 +28,7 @@ bool timers_frame_begin(GpuDevice* dev, GpuSwapchain* sc, GpuTimers* t, VkComman
   s.seq = t->next_seq++;
   s.pending = true;
   s.ended = false;
-  s.break_interval = false;
+  s.measure = GpuFrameMeasure::keep;
   s.overflow_printed = false;
   s.records.clear();
   t->cur = sc->frame;

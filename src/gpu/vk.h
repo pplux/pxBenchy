@@ -358,15 +358,22 @@ struct GpuUserTimer {
   const void* loc = nullptr; // tracy::SourceLocationData* (TRACY_ENABLE only), never freed
 };
 
+// What of a frame slot's results is recorded when it resolves. Only moves forward (keep -> break_interval -> drop)
+// until the next frame begins in the slot (reset to keep).
+enum class GpuFrameMeasure : uint8_t {
+  keep,           // busy, user timers and both intervals recorded
+  break_interval, // timers_break_interval (capture / blit / pause after it): the interval to the next frame dropped
+  drop,           // timers_drop_frame: busy, user timers and the intervals into and out of it dropped
+};
+
 // Per frame slot. Query 0 = frame start, query 1 = frame end.
 struct GpuTimerSlot {
   VkQueryPool pool = VK_NULL_HANDLE;
   uint32_t used = 0;
-  uint64_t seq = 0;            // frame order
-  bool pending = false;        // recorded, not resolved yet
-  bool ended = false;          // frame_end hook ran
-  bool break_interval = false; // offscreen blit after this frame: the interval to the next frame is dropped
-  bool drop = false;           // timers_drop_frame: busy and user timer results are dropped (reset when resolved)
+  uint64_t seq = 0;     // frame order
+  bool pending = false; // recorded, not resolved yet
+  bool ended = false;   // frame_end hook ran
+  GpuFrameMeasure measure = GpuFrameMeasure::keep;
   bool overflow_printed = false;
   std::vector<GpuTimerRecord> records; // closed user timers
 };

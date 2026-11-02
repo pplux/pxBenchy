@@ -6,22 +6,10 @@
 #include "lua/bind_gpu.h"
 #include "ui.h"
 #include "lua/gpu_api.h"
-#include "lua/timers_report.h"
+#include "run.h"
 
 // Device session and benchmark runs, shared by the command line (main.cpp) and the menu. Single-threaded: everything
 // runs on the main (platform) thread.
-
-// Per run (run_script). The menu's "Run all" uses the same options for every script.
-struct RunOptions {
-  long long frames = 6000; // 0 = run indefinitely
-  long long frames_warmup = 60;
-  long long time_limit = 0; // seconds of measured frames (after warm-up) before the run ends normally, 0 = off
-  bool hud = true;
-  bool offscreen = false;
-  std::string screenshot; // "" = off
-  long long screenshot_frame = 1;
-  std::string script;
-};
 
 // Lives as long as the window: window / surface handle, thermal thread, ImGui context (created by session_init). Per
 // device (session_init, recreated by session_switch): device + surface, shader compiler, swapchain
@@ -40,24 +28,6 @@ struct Session {
   GpuPassCtx pass;         // session_ui_frame's pass (no depth)
   bool quit = false;       // sticky: the window was closed / app destroyed (run or session_pump)
   std::string vulkan_info; // gpu_vulkan_info_json, queried at startup (empty: none)
-};
-
-// What a run produced. Reports are empty when the run ended at a screenshot or never started.
-struct RunResult {
-  std::string script;
-  bool ok = false;
-  bool quit = false;         // the window was closed / app destroyed during the run (Run all stops)
-  bool stopped = false;      // Back during the run (Run all stops)
-  bool time_limited = false; // ended by RunOptions::time_limit (a normal end, with reports)
-  GpuApi api = GpuApi::vk11;
-  bool validation = false;
-  bool offscreen = false;
-  std::string text; // timers_report table + bind_gpu_report lines
-  std::string json; // bind_gpu_report_json line, newline-terminated
-  // with the reports: measured frames (after warm-up), their fps, timers_summary (menu results table)
-  long long frames = 0;
-  double fps = 0.0;
-  std::vector<TimerSummary> timers;
 };
 
 // Platform window, thermal thread, then the device (api, validation): device + surface, shader compiler, and the
@@ -87,9 +57,10 @@ uint32_t session_wait_visible(Session* s);
 // next call.
 bool session_ui_frame(Session* s, const std::function<void()>& build);
 
-// One script: swapchain (reused or recreated), GpuLua, TimerSet and Lua VM, all destroyed before returning with the
-// device idle. Prints nothing but errors and the script's own output; the caller prints the reports. Pointer input
-// queued during the run is dropped (it must not click in the next UI frame).
+// One script: swapchain (reused or recreated), then drives a Run (run.h) through its frames, handling window events,
+// pause and Back / quit between them; the Run is destroyed before returning with the device idle.
+// Prints nothing but errors and the script's own output; the caller prints the reports. Pointer input queued during the
+// run is dropped (it must not click in the next UI frame).
 RunResult run_script(Session* s, const RunOptions& ro);
 
 // Result file: `{"pxbenchy":1,"device":<device_info_json>,"vulkan":<s->vulkan_info>,"runs":[<run JSON>, ...]}`,
@@ -98,6 +69,6 @@ RunResult run_script(Session* s, const RunOptions& ro);
 // also carries its own `device_info`, so runs from before a Vulkan switch keep theirs. Saved with
 // platform_save_results as `<model>-<yyyymmdd-hhmmss>.json` (local time; model from platform_device_info, characters
 // outside [A-Za-z0-9._-] replaced by `_`). False when nothing to save or the save failed; *where as
-// platform_save_results.
+// platform_save_results, *name = the file name asked for.
 std::string results_json(const Session* s, const std::vector<std::string>& runs);
-bool results_save(const Session* s, const std::vector<std::string>& runs, std::string* where);
+bool results_save(const Session* s, const std::vector<std::string>& runs, std::string* where, std::string* name);

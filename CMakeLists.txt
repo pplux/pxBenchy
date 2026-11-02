@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 # the app version (Android versionName; versionCode = major*10000 + minor*100 + patch)
-project(pxbenchy VERSION 0.1.1 LANGUAGES C CXX)
+project(pxbenchy VERSION 0.1.2 LANGUAGES C CXX)
 if(APPLE)
   enable_language(OBJCXX)
 endif()
@@ -79,12 +79,12 @@ set(PXB_SOURCES src/main.cpp src/gpu/vkc/device.cpp src/gpu/vk13/device.cpp src/
   src/gpu/vk11/pass.cpp src/gpu/vk11/screenshot.cpp src/gpu/vk11/swapchain.cpp src/gpu/vk11/timers.cpp
   src/gpu/vkc/imgui.cpp src/gpu/vk11/imgui.cpp src/gpu/vk13/imgui.cpp
   src/gpu/vkc/info.cpp src/gpu/vk11/info.cpp src/gpu/vk13/info.cpp
-  src/lua/timers_report.cpp src/lua/gpu_api.cpp src/platform/thermal.cpp src/platform/pointer.cpp
-  src/session.cpp src/menu.cpp src/ui.cpp src/device_info.cpp src/json.cpp)
-# src/gpu/vkc is private to src/gpu: src/lua, src/main.cpp, src/session.*, src/menu.*, src/ui.* and src/device_info.*
-# go through gpu/vk.h, gpu/vk13.h (+ lua/gpu_api.h)
+  src/timers.cpp src/lua/gpu_api.cpp src/platform/thermal.cpp src/platform/pointer.cpp
+  src/run.cpp src/session.cpp src/menu.cpp src/ui.cpp src/device_info.cpp src/json.cpp)
+# src/gpu/vkc is private to src/gpu: src/lua, src/main.cpp, src/run.*, src/session.*, src/menu.*, src/ui.* and
+# src/device_info.* go through gpu/vk.h, gpu/vk13.h (+ lua/gpu_api.h)
 file(GLOB_RECURSE PXB_GPU_CALLERS CONFIGURE_DEPENDS src/lua/*.h src/lua/*.cpp src/main.cpp
-  src/session.h src/session.cpp src/menu.h src/menu.cpp src/ui.h src/ui.cpp src/device_info.h
+  src/run.h src/run.cpp src/session.h src/session.cpp src/menu.h src/menu.cpp src/ui.h src/ui.cpp src/device_info.h
   src/device_info.cpp)
 foreach(f ${PXB_GPU_CALLERS})
   file(STRINGS ${f} vkc_includes REGEX "#include \"gpu/vkc/")

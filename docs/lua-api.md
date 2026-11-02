@@ -1,8 +1,9 @@
 # Lua API
 
-A benchmark is a Lua 5.5 script. The app runs it once with `lua_pcall` on the render thread; the script's own loop is
-the frame loop, and every `gpu.present()` ends a frame. When the script returns (or errors) the app prints the timing
-report and tears down.
+A benchmark is a Lua 5.5 script on the render thread: setup, then `repeat <frame> until not gpu.present()`, then any
+cleanup. Every `gpu.present()` ends a frame; the app decides when the run ends, and then `gpu.present()` returns false
+so the script leaves its loop and returns. When the script returns (or errors) the app prints the timing report and
+tears down.
 
 Sandbox: only `base`, `coroutine`, `math`, `string`, `table`, `utf8`. No `io`, `os`, `package`, `debug`; `dofile` and
 `loadfile` are nil. Files go through `pxb.read_file`, `pxb.load_glb`, `pxb.load_image` and `require` (Android: APK assets only).
@@ -27,14 +28,13 @@ local ib = gpu.buffer{size = 6, usage = "index"}
 ib:open(); ib:write(0, string.pack("<I2I2I2", 0, 1, 2)); ib:close()
 
 local timer = gpu.timer("pass")
-for _ = 1, pxb.args.frames_warmup + pxb.args.frames do
+repeat
   timer:start()
   gpu.begin_pass{clear = {0, 0, 0, 1}}
   gpu.draw{pipeline = pipe, vertex_buffers = {vb}, index_buffer = ib, index_type = "u16", count = 3}
   gpu.end_pass()
   timer:stop()
-  gpu.present()
-end
+until not gpu.present()
 ```
 
 ## Shaders
@@ -136,14 +136,18 @@ One pass at a time. The target is the screen, or the offscreen image with `--off
 
 Inside a pass only.
 
-### gpu.present() -> presented
+### gpu.present() -> continue
 
-Ends the frame: submits, presents (not in `--offscreen`) and the warm-up reset, then yields to the app (the script
-runs as a coroutine). Between frames the app handles window events, swapchain recreation and the Android background
-pause, then resumes the script. Returns whether an image reached the screen. When the window is closed, on Back
-(Android) / Escape (macOS), at `--time-limit` and after `--screenshot` the app does not resume the script: the run ends
-there, with its report (Back and quit: command line exit 1, menu shows it stopped). Call it from the script's own code
-or functions it calls (`pcall` is fine), not while a `require`d module's top level runs.
+Ends the frame: submits and presents (not in `--offscreen`), then yields to the app (the script runs as a coroutine).
+Between frames the app handles window events, swapchain recreation and the Android background pause, then resumes the
+script. Returns true with the next frame open. When the run ends (after the warm-up + `--frames` presents, at
+`--time-limit`, after `--screenshot`, on Back (Android) / Escape (macOS), when the window is closed) the app resumes
+the script once more with false and no frame: nothing of it is measured, calls that record GPU work (`begin_pass`,
+`draw`, `dispatch`, `blit`, `buf:open` / `buf:close`, `tex:upload`, gpu timer `start` / `stop`) raise
+`<fn>: no frame (the run has ended)`, and calling `gpu.present()` again raises `gpu.present: the run has ended`.
+Releasing resources and returning is fine. Back and quit still end with exit 1 (the menu shows the run stopped). Call
+it from the script's own code or functions it calls (`pcall` is fine), not while a `require`d module's top level
+runs.
 
 ### gpu.timer(name) -> timer
 
@@ -163,15 +167,11 @@ Blocks until the GPU is idle.
 
 ## pxb
 
-### pxb.args
-
-`pxb.args.frames` (`--frames`, 0 = run until the window closes) and `pxb.args.frames_warmup` (`--frames-warmup`).
-Loop `frames_warmup + frames` times; timers are cleared at the warm-up's last present.
-
 ### pxb.cpu_timer(name) -> timer
 
 CPU wall-clock timer: `timer:start()`, `timer:stop()` (strictly nested), `timer:results()` (nanoseconds). Each timer is
-a report row and a Tracy CPU zone.
+a report row and a Tracy CPU zone. A sample appears in `results()` once the frame it stopped in has ended. Timers left
+open in `gpu.present()` when the run ends are closed (dropped) before it returns false.
 
 ### pxb.cpu_time() -> ns
 

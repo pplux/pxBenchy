@@ -74,4 +74,9 @@ bool pass_end(GpuPassCtx* ctx) {
   return true;
 }
 
+void pass_shutdown(GpuDevice* dev, GpuPassCtx* ctx) {
+  texture_destroy(dev, &ctx->depth); // vk11's: forgets the framebuffers on its view
+  ctx->cmd = VK_NULL_HANDLE;
+}
+
 } // namespace vk11
