@@ -1,7 +1,7 @@
 -- Demo 2: demo1_instancing (same data, camera, shaders, floor), grid drawn direct vs vkCmdDrawIndexedIndirect.
--- Six modes alternate every frame, each with its own CPU + GPU timers (report + Tracy zones). "pass"
--- spans the whole pass: on tiled GPUs (Apple) draws execute at pass resolve, so "draw" alone reads ~0.
---   none: no grid draw (clear + floor only), baseline for the other modes; "draw" times an empty timer pair
+-- Six modes alternate every frame, each with its own CPU + GPU timers (report + Tracy zones). The GPU timer "pass"
+-- spans the whole pass: inside a pass, timestamps are not meaningful on tiled GPUs (Apple, Mali: they read 0).
+--   none: no grid draw (clear + floor only), baseline for the other modes
 --   instanced: vkCmdDrawIndexed, N instances (demo1's draw)
 --   indirect-instanced: one indirect command, N instances (demo1's draw, arguments from a buffer)
 --   indirect-per-object: N indirect commands of 1 instance each, firstInstance = i (multi-draw indirect)
@@ -123,13 +123,11 @@ local function draw_floor()
     count = c.index_count, instances = 1, push = big_push}
 end
 
-local none_cpu, none_draw, none_pass = pxb.cpu_timer("frame none"), gpu.timer("draw none"), gpu.timer("pass none")
+local none_cpu, none_pass = pxb.cpu_timer("frame none"), gpu.timer("pass none")
 local function frame_none()
   none_cpu:start()
   none_pass:start()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  none_draw:start()
-  none_draw:stop()
   draw_floor()
   gpu.end_pass()
   none_pass:stop()
@@ -137,16 +135,13 @@ local function frame_none()
   none_cpu:stop()
 end
 
-local instanced_cpu, instanced_draw, instanced_pass =
-  pxb.cpu_timer("frame instanced"), gpu.timer("draw instanced"), gpu.timer("pass instanced")
+local instanced_cpu, instanced_pass = pxb.cpu_timer("frame instanced"), gpu.timer("pass instanced")
 local function frame_instanced()
   instanced_cpu:start()
   instanced_pass:start()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  instanced_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     count = m.index_count, instances = N, push = push}
-  instanced_draw:stop()
   draw_floor()
   gpu.end_pass()
   instanced_pass:stop()
@@ -154,16 +149,13 @@ local function frame_instanced()
   instanced_cpu:stop()
 end
 
-local ind_inst_cpu, ind_inst_draw, ind_inst_pass = pxb.cpu_timer("frame indirect-instanced"),
-  gpu.timer("draw indirect-instanced"), gpu.timer("pass indirect-instanced")
+local ind_inst_cpu, ind_inst_pass = pxb.cpu_timer("frame indirect-instanced"), gpu.timer("pass indirect-instanced")
 local function frame_indirect_instanced()
   ind_inst_cpu:start()
   ind_inst_pass:start()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  ind_inst_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     indirect = ind_instanced, draw_count = 1, push = push}
-  ind_inst_draw:stop()
   draw_floor()
   gpu.end_pass()
   ind_inst_pass:stop()
@@ -171,16 +163,13 @@ local function frame_indirect_instanced()
   ind_inst_cpu:stop()
 end
 
-local per_obj_cpu, per_obj_draw, per_obj_pass = pxb.cpu_timer("frame indirect-per-object"),
-  gpu.timer("draw indirect-per-object"), gpu.timer("pass indirect-per-object")
+local per_obj_cpu, per_obj_pass = pxb.cpu_timer("frame indirect-per-object"), gpu.timer("pass indirect-per-object")
 local function frame_indirect_per_object()
   per_obj_cpu:start()
   per_obj_pass:start()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  per_obj_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     indirect = ind_per_object, draw_count = N, push = push}
-  per_obj_draw:stop()
   draw_floor()
   gpu.end_pass()
   per_obj_pass:stop()
@@ -188,16 +177,14 @@ local function frame_indirect_per_object()
   per_obj_cpu:stop()
 end
 
-local empty_cpu, empty_draw, empty_pass = pxb.cpu_timer("frame indirect-per-object-empty"),
-  gpu.timer("draw indirect-per-object-empty"), gpu.timer("pass indirect-per-object-empty")
+local empty_cpu, empty_pass =
+  pxb.cpu_timer("frame indirect-per-object-empty"), gpu.timer("pass indirect-per-object-empty")
 local function frame_indirect_per_object_empty()
   empty_cpu:start()
   empty_pass:start()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  empty_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     indirect = ind_per_object_empty, draw_count = N, push = push}
-  empty_draw:stop()
   draw_floor()
   gpu.end_pass()
   empty_pass:stop()
@@ -205,17 +192,15 @@ local function frame_indirect_per_object_empty()
   empty_cpu:stop()
 end
 
-local upload_cpu, upload_draw, upload_pass = pxb.cpu_timer("frame indirect-instanced-upload"),
-  gpu.timer("draw indirect-instanced-upload"), gpu.timer("pass indirect-instanced-upload")
+local upload_cpu, upload_pass =
+  pxb.cpu_timer("frame indirect-instanced-upload"), gpu.timer("pass indirect-instanced-upload")
 local function frame_indirect_instanced_upload()
   upload_cpu:start()
   upload_pass:start()
   ind_upload:open(); ind_upload:write(0, string.pack(CMD, m.index_count, N, 0, 0, 0)); ind_upload:close()
   gpu.begin_pass{clear = CLEAR, depth = true}
-  upload_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     indirect = ind_upload, draw_count = 1, push = push}
-  upload_draw:stop()
   draw_floor()
   gpu.end_pass()
   upload_pass:stop()

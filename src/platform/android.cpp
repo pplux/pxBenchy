@@ -28,6 +28,17 @@ static android_app* s_app = nullptr;
 // TERM_WINDOW pre_exec done, post_exec deferred until the caller destroyed its surface.
 static bool s_term_pending = false;
 
+// APP_CMD_PAUSE .. APP_CMD_RESUME: in the background (platform_visible false).
+static bool s_paused = false;
+
+// Visibility from the lifecycle commands, from platform_pump and from glue processing (onAppCmd).
+static void track_cmd(int8_t cmd) {
+  if (cmd == APP_CMD_PAUSE) { s_paused = true; }
+  if (cmd == APP_CMD_RESUME) { s_paused = false; }
+}
+
+static void on_app_cmd(android_app*, int32_t cmd) { track_cmd((int8_t)cmd); }
+
 // Completes the deferred TERM_WINDOW (glue sets app->window = NULL and wakes the Java thread).
 static void finish_term() {
   if (!s_term_pending) { return; }
@@ -164,9 +175,11 @@ void android_main(android_app* app) {
   s_term_pending = false;
   s_touch_id = -1;
   s_back = false;
+  s_paused = false;
   std::vector<PlatformPointerEvent> stale;
   platform_pointer_events(&stale);
   app->onInputEvent = on_input_event;
+  app->onAppCmd = on_app_cmd;
   redirect_to_logcat(stdout, 1, ANDROID_LOG_INFO);
   redirect_to_logcat(stderr, 2, ANDROID_LOG_ERROR);
   int rc = app_main(intent_args(app->activity));
@@ -212,6 +225,7 @@ uint32_t platform_pump() {
     }
     int8_t cmd = android_app_read_cmd(s_app);
     android_app_pre_exec_cmd(s_app, cmd);
+    track_cmd(cmd);
     if (cmd == APP_CMD_TERM_WINDOW) {
       // post_exec deferred: the Java side stays blocked until the caller dropped its VkSurface
       s_term_pending = true;
@@ -225,6 +239,8 @@ uint32_t platform_pump() {
   s_back = false;
   return ev;
 }
+
+bool platform_visible() { return !s_paused; }
 
 bool platform_wait_surface() {
   finish_term();

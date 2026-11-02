@@ -49,17 +49,17 @@ struct GpuLua {
   int64_t measure_start_ns = 0;         // wall time when measuring began (warm-up reset, or init without warm-up)
   long long measure_start_presents = 0; // presents at that point
   int64_t measure_end_ns = 0;           // wall time when the script ended (bind_gpu_finish)
-  bool frame_open = false;              // frame_begin + timers_frame_begin done, not yet ended
+  bool frame_open = false;              // frame_begin done, not yet ended
+  bool frame_timed = false;             // timers_frame_begin done for the open frame (first script command)
   bool skipped = false;                 // frame_begin failed: ops are no-ops until the next present
   bool in_pass = false;                 // a pass is open (real, or virtual on a skipped frame)
-  bool quit = false;                    // sticky: platform QUIT seen by gpu.present
-  bool stopped = false;                 // sticky: platform BACK seen by gpu.present (run stopped by the user)
+  bool presented = false;               // last gpu.present result, returned when the session resumes the script
   std::string path;                     // script path (HUD)
   std::string screenshot;               // --screenshot path ("" = off)
   long long screenshot_frame = 1;       // --screenshot-frame: first open frame with presents + 1 >= this is captured
-  bool screenshot_taken = false;        // written: gpu.present stopped the script (vm_stop)
-  int64_t time_limit_ns = 0;            // --time-limit: measured wall time that ends the script (0 = off)
-  bool time_limited = false;            // reached: gpu.present stopped the script (vm_stop)
+  bool screenshot_taken = false;        // written by gpu.present: the session does not resume the script
+  int64_t time_limit_ns = 0;            // --time-limit, for the report (the session enforces it)
+  bool time_limited = false;            // the session ended the run at time_limit_ns (report)
   VkCommandBuffer cmd = VK_NULL_HANDLE;
   uint64_t opens = 0; // successful frame opens so far
   struct Dead {
@@ -75,8 +75,13 @@ struct GpuLua {
 // Timers init; call after swapchain create and gpu_ui_init.
 bool bind_gpu_init(GpuLua* g, GpuApi api, GpuDevice* dev, GpuSwapchain* sc, GpuUi* ui, TimerSet* ts, long long frames,
                    long long frames_warmup, bool hud);
-void bind_gpu_register(lua_State* L, GpuLua* g); // between vm_create and vm_run
-// After vm_run, before the report: ends open pass/frame, waits idle, resolves the GPU timers.
+void bind_gpu_register(lua_State* L, GpuLua* g); // between vm_create and vm_start
+// Between frames (the script yielded in gpu.present), for the session's frame loop:
+void bind_gpu_wait_idle(GpuLua* g);           // device idle, deferred destroys done: before swapchain / surface changes
+void bind_gpu_swapchain_recreated(GpuLua* g); // the offscreen capture went with the old swapchain
+void bind_gpu_paused(GpuLua* g, int64_t ns);  // ns without frames: clocks move forward, intervals spanning it dropped
+int64_t bind_gpu_measured_ns(const GpuLua* g); // wall time of the measured frames so far (0 during warm-up)
+// After the script ended or was stopped, before the report: ends open pass/frame, waits idle, resolves the GPU timers.
 void bind_gpu_finish(GpuLua* g);
 // After bind_gpu_finish: the measured frames (presents after the warm-up), their wall time in *secs.
 long long bind_gpu_measured(const GpuLua* g, double* secs);

@@ -3,6 +3,9 @@
 
 namespace vk11 {
 
+// Start and end timestamps at BOTTOM_OF_PIPE: written once every earlier command (earlier submits too) completed. A
+// TOP_OF_PIPE start may be written as soon as the command is reached (Mali does), before earlier work ends: durations
+// would include that work and overlapping frames.
 static void write_ts(VkCommandBuffer cmd, VkPipelineStageFlagBits stage, VkQueryPool pool, uint32_t q) {
   vkCmdWriteTimestamp(cmd, stage, pool, q);
 }
@@ -16,7 +19,7 @@ bool timers_frame_begin(GpuDevice* dev, GpuSwapchain* sc, GpuTimers* t, VkComman
   GpuTimerSlot& s = t->slots[sc->frame];
   vkc::part::timers_resolve_slot(dev, t, &s);
   vkCmdResetQueryPool(cmd, s.pool, 0, PXB_TIMER_QUERIES);
-  write_ts(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s.pool, 0);
+  write_ts(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s.pool, 0);
 #ifdef TRACY_ENABLE
   static constexpr tracy::SourceLocationData frame_loc{"gpu_frame", __func__, __FILE__, __LINE__, 0};
   t->frame_zone = std::make_unique<tracy::VkCtxScope>(t->tracy, &frame_loc, cmd, true);
@@ -81,7 +84,7 @@ bool timer_begin(GpuTimers* t, VkCommandBuffer cmd, uint32_t id) {
   } else {
     o.query = s.used;
     s.used += 2;
-    write_ts(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s.pool, o.query);
+    write_ts(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s.pool, o.query);
 #ifdef TRACY_ENABLE
     o.zone =
         std::make_unique<tracy::VkCtxScope>(t->tracy, (const tracy::SourceLocationData*)t->user[id].loc, cmd, true);

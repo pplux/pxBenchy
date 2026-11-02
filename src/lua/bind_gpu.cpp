@@ -8,7 +8,6 @@
 #include <string>
 #include "lua/gpu_api.h"
 #include "lua/timers_report.h"
-#include "lua/vm.h"
 #include "device_info.h"
 #include "json.h"
 #include "ui.h"
@@ -97,8 +96,10 @@ static void flush_dead(GpuLua* g, bool idle) {
 
 // ---- frame lifecycle ----
 
-// Opens the frame on first use. False = frame skipped (swapchain unavailable) until the next present.
-static bool ensure_frame(GpuLua* g) {
+// Opens the frame (waits for its slot, acquires): when gpu.present resumes the script, so the wait is not inside the
+// script's own timers, or at the first use after a skip. False = frame skipped (swapchain unavailable) until the next
+// present.
+static bool open_frame(GpuLua* g) {
   if (g->frame_open) { return true; }
   if (g->skipped) { return false; }
   VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -107,9 +108,6 @@ static bool ensure_frame(GpuLua* g) {
     return false;
   }
   g->gpu->descriptors_frame_begin(g->dev, &g->descriptors, g->sc->frame);
-  FrameMark;
-  timer_set_frame_begin(g->ts);
-  g->gpu->timers_frame_begin(g->dev, g->sc, &g->timers, cmd);
   g->frame_open = true;
   g->cmd = cmd;
   g->opens++;
@@ -117,8 +115,22 @@ static bool ensure_frame(GpuLua* g) {
   return true;
 }
 
+// Before the script's first command of the frame: the frame open and its timers started. A frame the script records
+// nothing into (e.g. opened by the last gpu.present) adds no timer samples.
+static bool ensure_frame(GpuLua* g) {
+  if (!open_frame(g)) { return false; }
+  if (!g->frame_timed) {
+    FrameMark;
+    timer_set_frame_begin(g->ts);
+    g->gpu->timers_frame_begin(g->dev, g->sc, &g->timers, g->cmd);
+    g->frame_timed = true;
+  }
+  return true;
+}
+
 static void end_frame(GpuLua* g, bool* presented) {
-  g->gpu->timers_frame_end(&g->timers, g->cmd);
+  if (g->frame_timed) { g->gpu->timers_frame_end(&g->timers, g->cmd); }
+  g->frame_timed = false;
   bool ok = g->gpu->frame_end(g->dev, g->sc);
   if (presented) { *presented = ok; }
   g->frame_open = false;
@@ -977,25 +989,6 @@ static void wait_idle(GpuLua* g) {
   flush_dead(g, true);
 }
 
-// Device idle. Resources that follow the swapchain format are rebuilt here.
-static bool recreate_swapchain(GpuLua* g) {
-  if (!g->gpu->swapchain_create(g->dev, g->sc)) { return false; }
-  return !g->sc->swapchain || g->gpu->imgui_set_format(g->dev, &g->ui->im, g->sc->format.format);
-}
-
-// UNVERIFIED (cannot be exercised on macOS).
-static bool recreate_surface(GpuLua* g) {
-  wait_idle(g);
-  g->gpu->swapchain_destroy(g->dev, g->sc);
-  g->gpu->surface_destroy(g->dev);
-  {
-    ZoneScopedN("wait_surface");
-    if (!platform_wait_surface()) { return false; }
-  }
-  if (!g->gpu->surface_create(g->dev, platform_surface_handle())) { return false; }
-  return recreate_swapchain(g);
-}
-
 // After the warm-up presents: drops every timer result so far (frame not open: present just ended it).
 static void warmup_reset(GpuLua* g) {
   wait_idle(g);
@@ -1126,6 +1119,14 @@ static void count_fps(GpuLua* g) {
   }
 }
 
+// gpu.present continues here when the session resumes the script: returns presented.
+static int present_k(lua_State* L, int, lua_KContext) {
+  open_frame(ctx(L)); // the next frame's slot wait and acquire happen here, inside gpu.present
+  lua_pushboolean(L, ctx(L)->presented);
+  return 1;
+}
+
+// Ends the frame and yields to the session's frame loop (events, stop, swapchain changes happen there).
 static int l_present(lua_State* L) {
   GpuLua* g = ctx(L);
   if (g->in_pass) { return luaL_error(L, "gpu.present: a pass is still open"); }
@@ -1152,8 +1153,8 @@ static int l_present(lua_State* L) {
     printf("screenshot: %s (frame %lld, %ux%u)\n", g->screenshot.c_str(), g->presents + 1, g->sc->view_extent.width,
            g->sc->view_extent.height);
     fflush(stdout);
-    g->screenshot_taken = true;
-    return vm_stop(L);
+    g->screenshot_taken = true; // the session ends the run: not resumed
+    return lua_yield(L, 0);
   }
   if (g->sc->offscreen && !g->sc->submit_failed) {
     // about once per wall second: own submit captures the last submitted frame; two frames later (its fence waited,
@@ -1180,32 +1181,15 @@ static int l_present(lua_State* L) {
   if (g->sc->submit_failed) { return luaL_error(L, "gpu.present: submit failed"); }
   if (++g->presents == g->frames_warmup) { warmup_reset(g); }
   g->skipped = false;
-  uint32_t ev = platform_pump();
-  if (ev & PXB_EV_QUIT) { g->quit = true; }
-  if (ev & PXB_EV_BACK) { g->stopped = true; }
-  if (g->quit) { return luaL_error(L, "quit requested"); }
-  if (g->stopped) { return luaL_error(L, "stopped (back)"); }
-  if (g->time_limit_ns && g->presents >= g->frames_warmup && timer_now_ns() - g->measure_start_ns >= g->time_limit_ns) {
-    g->time_limited = true;
-    return vm_stop(L);
-  }
-  if (ev & PXB_EV_SURFACE_LOST) {
-    g->blit_in = 0; // capture destroyed with the swapchain
-    if (!recreate_surface(g)) { return luaL_error(L, "surface recreation failed (or quit)"); }
-  } else if ((ev & PXB_EV_RESIZED) || g->sc->needs_recreate) {
-    wait_idle(g);
-    g->blit_in = 0; // capture destroyed with the swapchain
-    if (!recreate_swapchain(g)) { return luaL_error(L, "swapchain recreation failed"); }
-  }
-  lua_pushboolean(L, presented);
-  return 1;
+  g->presented = presented;
+  return lua_yieldk(L, 0, 0, present_k);
 }
 
 static int l_wait_idle(lua_State* L) {
   GpuLua* g = ctx(L);
   wait_idle(g);
   // resolving would drop the open frame's timings (its slot is pending but not ended)
-  if (!g->frame_open) { g->gpu->timers_resolve_all(g->dev, &g->timers); }
+  if (!g->frame_timed) { g->gpu->timers_resolve_all(g->dev, &g->timers); }
   return 0;
 }
 
@@ -1355,6 +1339,23 @@ void bind_gpu_finish(GpuLua* g) {
   if (g->frame_open) { end_frame(g, nullptr); }
   wait_idle(g);
   g->gpu->timers_resolve_all(g->dev, &g->timers);
+}
+
+void bind_gpu_wait_idle(GpuLua* g) { wait_idle(g); }
+
+void bind_gpu_swapchain_recreated(GpuLua* g) { g->blit_in = 0; }
+
+void bind_gpu_paused(GpuLua* g, int64_t ns) {
+  g->start_ns += ns;
+  g->measure_start_ns += ns;
+  g->fps_t0 += ns;
+  g->last_present_ns += ns;
+  g->gpu->timers_break_interval(&g->timers);
+  timer_set_break_interval(g->ts);
+}
+
+int64_t bind_gpu_measured_ns(const GpuLua* g) {
+  return g->presents >= g->frames_warmup ? timer_now_ns() - g->measure_start_ns : 0;
 }
 
 long long bind_gpu_measured(const GpuLua* g, double* secs) {

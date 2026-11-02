@@ -40,12 +40,11 @@ struct UpdateCheck {
 
 struct Menu {
   RunOptions ro;
-  bool time_limit = true;           // "Run all demos" ends each demo after MENU_TIME_LIMIT s of measured frames
+  bool time_limit = true;           // each run ends after MENU_TIME_LIMIT s of measured frames
   bool vk13 = false;                // gpu_vk13_supported()
   float scale = 1.0f;               // platform_ui_scale()
   PlatformInsets insets;            // platform_safe_insets(), kept clear of the full-screen windows
   std::vector<std::string> scripts; // platform_list_scripts()
-  std::vector<std::string> demos;   // suite_scripts() ("Run all")
   std::vector<RunResult> results;   // every run of the app session, in run order
   std::string status;               // last action's outcome
   std::string device_summary;       // header: device_info_summary, set at start and after each Vulkan switch
@@ -344,9 +343,9 @@ static void build_settings(Menu* m, Session* s) {
 static void build_scripts(Menu* m) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Scripts");
-  same_line_if_fits("Run all demos");
-  ImGui::BeginDisabled(m->demos.empty());
-  if (ImGui::Button("Run all demos")) { m->action = Menu::Action::run_all; }
+  same_line_if_fits("Run all");
+  ImGui::BeginDisabled(m->scripts.empty());
+  if (ImGui::Button("Run all")) { m->action = Menu::Action::run_all; }
   ImGui::EndDisabled();
   if (m->scripts.empty()) { ImGui::TextDisabled("no scripts/*.lua found"); }
   for (size_t i = 0; i < m->scripts.size(); i++) {
@@ -490,20 +489,11 @@ static void build_menu(Menu* m, Session* s) {
   ImGui::End();
 }
 
-// "Run all": `scripts/demo*.lua` from platform_list_scripts, sorted.
-static std::vector<std::string> suite_scripts() {
-  std::vector<std::string> out;
-  for (const std::string& p : platform_list_scripts()) {
-    if (p.rfind("scripts/demo", 0) == 0) { out.push_back(p); }
-  }
-  return out;
-}
-
 // Runs script with the menu's options: prints the report, sets the status and adds the run to the results table.
-static RunResult run_one(Menu* m, Session* s, const std::string& script, long long time_limit) {
+static RunResult run_one(Menu* m, Session* s, const std::string& script) {
   RunOptions ro = m->ro;
   ro.script = script;
-  ro.time_limit = time_limit;
+  ro.time_limit = m->time_limit ? MENU_TIME_LIMIT : 0;
   RunResult r = run_script(s, ro);
   print_result(r);
   set_status(m, r);
@@ -530,16 +520,18 @@ static void run_action(Menu* m, Session* s) {
       m->device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
       break;
     }
-    case Menu::Action::run: run_one(m, s, m->scripts[m->run_index], 0); break;
+    case Menu::Action::run: run_one(m, s, m->scripts[m->run_index]); break;
     case Menu::Action::run_all: {
       size_t runs = 0;
-      while (runs < m->demos.size()) {
-        printf("menu: run all %zu/%zu %s\n", runs + 1, m->demos.size(), m->demos[runs].c_str());
+      while (runs < m->scripts.size()) {
+        printf("menu: run all %zu/%zu %s\n", runs + 1, m->scripts.size(), m->scripts[runs].c_str());
         fflush(stdout);
-        RunResult r = run_one(m, s, m->demos[runs++], m->time_limit ? MENU_TIME_LIMIT : 0);
+        RunResult r = run_one(m, s, m->scripts[runs++]);
         if (r.quit || r.stopped) { break; }
       }
-      if (runs < m->demos.size() && !s->quit) { m->status += "  (run all stopped after " + std::to_string(runs) + ")"; }
+      if (runs < m->scripts.size() && !s->quit) {
+        m->status += "  (run all stopped after " + std::to_string(runs) + ")";
+      }
       break;
     }
     case Menu::Action::clear: m->results.clear(); break;
@@ -567,7 +559,6 @@ int menu_run(Session* s, const RunOptions& ro) {
   m.vk13 = gpu_vk13_supported();
   m.scale = platform_ui_scale();
   m.scripts = platform_list_scripts();
-  m.demos = suite_scripts();
   m.device_summary = s->dev_ready ? device_info_summary(&s->dev) : "";
   m.update = std::make_shared<UpdateCheck>();
 #if defined(__ANDROID__) // desktop builds come from source: no check
@@ -576,6 +567,10 @@ int menu_run(Session* s, const RunOptions& ro) {
   int redraw = REDRAW_FRAMES;
   while (!s->quit) {
     uint32_t ev = session_pump(s);
+    if (!platform_visible()) { // background (e.g. the share target app): draw nothing, redraw on return
+      ev |= session_wait_visible(s);
+      redraw = REDRAW_FRAMES;
+    }
     if (ev & (PXB_EV_QUIT | PXB_EV_BACK)) { break; }
     if (!m.update_seen && m.update->done.load()) {
       m.update_seen = true;

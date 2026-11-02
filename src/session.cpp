@@ -1,8 +1,10 @@
 #include "session.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <thread>
 #include "device_info.h"
 #include "platform/platform.h"
 #include "platform/thermal.h"
@@ -124,6 +126,52 @@ static bool session_swapchain(Session* s, bool offscreen, bool readable) {
   return false;
 }
 
+static uint32_t session_events(Session* s, uint32_t ev);
+
+// Between two frames of a run (the script yielded in gpu.present): window events (swapchain / surface recreated), the
+// background pause, Back / quit and the time limit. False ends the run, res says why (nothing set: failure).
+static bool run_between_frames(Session* s, GpuLua* g, const RunOptions& ro, RunResult* res) {
+  uint32_t ev = platform_pump();
+  bool hidden = !platform_visible();
+  if (hidden || (ev & (PXB_EV_SURFACE_LOST | PXB_EV_RESIZED)) || s->sc.needs_recreate) {
+    bind_gpu_wait_idle(g); // the swapchain or surface may go
+  }
+  ev = session_events(s, ev);
+  if (s->sc_ready && s->sc.needs_recreate) { swapchain_drop(s); }
+  if (hidden && !(ev & (PXB_EV_QUIT | PXB_EV_BACK))) { // UNVERIFIED (cannot be exercised on macOS)
+    printf("run: paused (app in the background)\n");
+    fflush(stdout);
+    int64_t t0 = timer_now_ns();
+    ev |= session_wait_visible(s);
+    int64_t ns = timer_now_ns() - t0;
+    bind_gpu_paused(g, ns);
+    printf("run: resumed after %.1f s (excluded from the measurement)\n", ns / 1e9);
+    fflush(stdout);
+  }
+  if (ev & PXB_EV_QUIT) {
+    printf("run: quit requested\n");
+    res->quit = true;
+    return false;
+  }
+  if (ev & PXB_EV_BACK) {
+    printf("run: stopped (back)\n");
+    res->stopped = true;
+    return false;
+  }
+  if (!s->sc_ready) {
+    bind_gpu_swapchain_recreated(g);
+    if (!session_swapchain(s, ro.offscreen, !ro.screenshot.empty())) {
+      fprintf(stderr, "error: swapchain recreation failed\n");
+      return false;
+    }
+  }
+  if (ro.time_limit && bind_gpu_measured_ns(g) >= ro.time_limit * 1000000000LL) {
+    res->time_limited = g->time_limited = true;
+    return false;
+  }
+  return true;
+}
+
 RunResult run_script(Session* s, const RunOptions& ro) {
   RunResult res;
   res.script = ro.script;
@@ -147,7 +195,12 @@ RunResult run_script(Session* s, const RunOptions& ro) {
     script.screenshot = ro.screenshot;
     script.screenshot_frame = ro.screenshot_frame;
     script.time_limit_ns = ro.time_limit * 1000000000LL;
-    res.ok = L && vm_run(L, ro.script);
+    // the frame loop: the script yields at each gpu.present
+    VmState st = L ? vm_start(L, ro.script) : VmState::error;
+    while (st == VmState::yield && !script.screenshot_taken && run_between_frames(s, &script, ro, &res)) {
+      st = vm_resume(L);
+    }
+    res.ok = st == VmState::done || (st == VmState::yield && (script.screenshot_taken || res.time_limited));
     bind_gpu_finish(&script);
     if (res.ok && !ro.screenshot.empty() && !script.screenshot_taken) {
       fprintf(stderr, "error: --screenshot: script ended before frame %lld\n", ro.screenshot_frame);
@@ -161,10 +214,6 @@ RunResult run_script(Session* s, const RunOptions& ro) {
       res.fps = secs > 0 ? res.frames / secs : 0.0;
       res.timers = timers_summary(&ts, &script.timers, s->gpu);
     }
-    res.quit = script.quit;
-    res.stopped = script.stopped;
-    res.time_limited = script.time_limited;
-    s->quit = s->quit || script.quit;
     vm_destroy(L);
     bind_gpu_shutdown(&script);
   } else {
@@ -182,8 +231,19 @@ RunResult run_script(Session* s, const RunOptions& ro) {
   return res;
 }
 
-uint32_t session_pump(Session* s) {
-  uint32_t ev = platform_pump();
+uint32_t session_pump(Session* s) { return session_events(s, platform_pump()); }
+
+uint32_t session_wait_visible(Session* s) {
+  uint32_t ev = 0;
+  while (!platform_visible() && !(ev & (PXB_EV_QUIT | PXB_EV_BACK))) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    ev |= session_pump(s);
+  }
+  return ev;
+}
+
+// Device idle: the window events of one platform_pump (session_pump), for the menu and between the frames of a run.
+static uint32_t session_events(Session* s, uint32_t ev) {
   // ev is a bitmask: handled in priority order, a surface loss covers a resize
   if (s->quit) { return ev | PXB_EV_QUIT; }
 

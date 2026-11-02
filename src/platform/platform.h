@@ -15,6 +15,9 @@ void* platform_surface_handle(); // CAMetalLayer* (macOS) | ANativeWindow* (Andr
 void platform_drawable_size(uint32_t* w, uint32_t* h); // pixels (macOS: bounds * backingScaleFactor)
 uint32_t platform_pump();                              // non-blocking; bitmask of PXB_EV_*
 bool platform_wait_surface();                          // blocks pumping until surface ready (true) or quit (false)
+// False while the app is in the background: draw nothing, keep pumping (a hidden window may never return swapchain
+// images, so acquire would block). Android: from APP_CMD_PAUSE to APP_CMD_RESUME | macOS: always true.
+bool platform_visible();
 bool platform_read_file(const char* path, std::string* out); // whole file; filesystem (macOS) | APK assets (Android)
 // `scripts/<name>.lua` paths (platform_read_file paths), sorted by name: directory `scripts` relative to the working
 // directory (macOS) | APK assets dir `scripts` (Android). Empty when the directory is missing.

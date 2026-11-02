@@ -41,23 +41,7 @@ static int vm_print(lua_State* L) {
   return 0;
 }
 
-static char g_stop; // vm_stop's error value (light userdata)
-
-int vm_stop(lua_State* L) {
-  lua_pushlightuserdata(L, &g_stop);
-  return lua_error(L);
-}
-
-static int msg_handler(lua_State* L) {
-  if (lua_touserdata(L, 1) == &g_stop) { return 1; }
-  const char* msg = lua_tostring(L, 1);
-  if (msg == nullptr) {
-    if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) { return 1; }
-    msg = lua_pushfstring(L, "(error object is a %s value)", luaL_typename(L, 1));
-  }
-  luaL_traceback(L, L, msg, 1);
-  return 1;
-}
+static char g_co; // registry key of the script coroutine (vm_start)
 
 // Mirrors lauxlib's luaL_newstate (alloc, panic, warnings) with the allocator reporting to Tracy pool "lua".
 static void* lua_alloc(void*, void* ptr, size_t, size_t nsize) {
@@ -178,26 +162,50 @@ lua_State* vm_create() {
   return L;
 }
 
-bool vm_run(lua_State* L, const std::string& path) {
+// Resumes co; on an error reports its message and co's traceback (co keeps its stack after an error).
+static VmState resume(lua_State* L, lua_State* co) {
+  int nres = 0;
+  int rc = lua_resume(co, L, 0, &nres);
+  if (rc == LUA_YIELD || rc == LUA_OK) {
+    lua_pop(co, nres);
+    return rc == LUA_YIELD ? VmState::yield : VmState::done;
+  }
+  lua_xmove(co, L, 1); // error object
+  const char* msg = lua_tostring(L, -1);
+  if (msg == nullptr) {
+    if (!luaL_callmeta(L, -1, "__tostring") || lua_type(L, -1) != LUA_TSTRING) {
+      lua_pushfstring(L, "(error object is a %s value)", luaL_typename(L, -1));
+    }
+    msg = lua_tostring(L, -1);
+  }
+  luaL_traceback(L, co, msg, 0);
+  report_error(lua_tostring(L, -1));
+  lua_settop(L, 0);
+  return VmState::error;
+}
+
+VmState vm_start(lua_State* L, const std::string& path) {
   std::string buf;
   if (!platform_read_file(path.c_str(), &buf)) {
     report_error("cannot read script '" + path + "'");
-    return false;
+    return VmState::error;
   }
-  lua_pushcfunction(L, msg_handler);
-  int base = lua_gettop(L);
+  lua_State* co = lua_newthread(L);
+  lua_rawsetp(L, LUA_REGISTRYINDEX, &g_co); // anchored until vm_destroy
   std::string chunk = "@" + path;
-  int rc = luaL_loadbufferx(L, buf.data(), buf.size(), chunk.c_str(), "t");
-  if (rc == LUA_OK) { rc = lua_pcall(L, 0, 0, base); }
-  if (rc != LUA_OK && lua_touserdata(L, -1) == &g_stop) { rc = LUA_OK; }
-  if (rc != LUA_OK) {
-    const char* m = lua_tostring(L, -1);
+  if (luaL_loadbufferx(co, buf.data(), buf.size(), chunk.c_str(), "t") != LUA_OK) {
+    const char* m = lua_tostring(co, -1);
     report_error(m ? m : "(unknown error)");
-    lua_settop(L, base - 1);
-    return false;
+    return VmState::error;
   }
-  lua_settop(L, base - 1);
-  return true;
+  return resume(L, co);
+}
+
+VmState vm_resume(lua_State* L) {
+  lua_rawgetp(L, LUA_REGISTRYINDEX, &g_co);
+  lua_State* co = lua_tothread(L, -1);
+  lua_pop(L, 1);
+  return resume(L, co);
 }
 
 void vm_destroy(lua_State* L) {

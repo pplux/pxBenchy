@@ -212,6 +212,8 @@ uint32_t platform_pump() {
   return ev;
 }
 
+bool platform_visible() { return true; }
+
 bool platform_wait_surface() { return g_window && !(g_events & PXB_EV_QUIT) && !g_sigint; }
 
 bool platform_read_file(const char* path, std::string* out) {

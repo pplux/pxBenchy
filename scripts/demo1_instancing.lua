@@ -95,17 +95,17 @@ local push = {view_proj = view_proj, light_dir = light_dir, eye = eye, scale = {
 local big_push = {view_proj = view_proj, light_dir = light_dir, eye = eye,
   scale = {big_scale, big_scale, big_scale}, color = {0.8, 0.05, 0.05}}
 local cpu_frame = pxb.cpu_timer("frame")
-local gpu_draw = gpu.timer("draw")
+local gpu_pass = gpu.timer("pass") -- whole pass: inside a pass, timestamps are not meaningful on tiled GPUs
 local function frame()
   cpu_frame:start()
+  gpu_pass:start()
   gpu.begin_pass{clear = {0.05, 0.05, 0.1, 1}, depth = true}
-  gpu_draw:start()
   gpu.draw{pipeline = pipe, vertex_buffers = {vb, inst}, index_buffer = ib, index_type = m.index_type,
     count = m.index_count, instances = N, push = push}
-  gpu_draw:stop()
   gpu.draw{pipeline = pipe, vertex_buffers = {cvb, big_inst}, index_buffer = cib, index_type = c.index_type,
     count = c.index_count, instances = 1, push = big_push}
   gpu.end_pass()
+  gpu_pass:stop()
   gpu.present()
   cpu_frame:stop()
 end

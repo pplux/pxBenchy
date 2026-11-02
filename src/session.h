@@ -11,7 +11,7 @@
 // Device session and benchmark runs, shared by the command line (main.cpp) and the menu. Single-threaded: everything
 // runs on the main (platform) thread.
 
-// Per run (run_script). The menu's "Run all" uses the same options for every demo.
+// Per run (run_script). The menu's "Run all" uses the same options for every script.
 struct RunOptions {
   long long frames = 6000; // 0 = run indefinitely
   long long frames_warmup = 60;
@@ -75,6 +75,10 @@ void session_shutdown(Session* s);
 // for the new window and recreates the surface; the next run or UI frame recreates the swapchain). Sets quit on QUIT
 // (also when the wait for a new window ends in a quit). Returns the PXB_EV_* bits.
 uint32_t session_pump(Session* s);
+// No run active, device idle: while the app is in the background (platform_visible false), session_pump every 16 ms
+// and draw nothing (a hidden window may never return swapchain images). Returns the PXB_EV_* bits seen; QUIT or BACK
+// end the wait early.
+uint32_t session_wait_visible(Session* s);
 
 // No run active, device idle: one frame on a regular (not offscreen) swapchain, created or recreated as needed: clear,
 // then the ImGui frame `build` makes between NewFrame and Render (DisplaySize = view_extent; queued input must already

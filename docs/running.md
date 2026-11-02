@@ -33,12 +33,12 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
 - Vulkan 1.1 / 1.3 (initial: as `--vulkan auto`; 1.3 greyed out when the probe finds no 1.3 device) and validation
   on / off (not in Release builds): each change recreates the device (prints a new `device:` line).
 - Offscreen on / off (starts on); frames and warm-up with -/+ buttons over fixed steps (frames 60 .. 12000, warm-up 0 .. 300).
-- Time limit off / 60 s (starts on): "Run all demos" ends each demo normally after 60 s of measured frames (as
-  `--time-limit 60`); a script's own Run button runs without a limit. Cut runs show `(time limit)` in Results.
-- Scripts: every `scripts/*.lua` with its own Run button; "Run all demos" runs every `scripts/demo*.lua`
+- Time limit off / 60 s (starts on): every run (a script's Run button and each script of "Run all") ends
+  normally after 60 s of measured frames (as `--time-limit 60`). Cut runs show `(time limit)` in Results.
+- Scripts: every `scripts/*.lua` with its own Run button; "Run all" runs every one of them
   in name order with the same options, back to back; Back during a script stops the remaining ones.
 - Results: one row per run (script, vulkan, `val` / `off` options, fps, median gpu busy and cpu frame interval in ms),
-  kept for the app session in run order ("Run all demos" adds one row per script). Tap a row for the median of each
+  kept for the app session in run order ("Run all" adds one row per script). Tap a row for the median of each
   timer. Clear empties the table. "Save results" saves every run in the table. The status line shows the path (macOS)
   or `content://` URI (Android).
 - Share, Share as text, Copy: send the table's results JSON (disabled while the table is empty). Copy and Share as
@@ -53,6 +53,9 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
   failed check (offline, no releases) shows nothing.
 - During a run only the HUD is drawn. Back (Android) or Escape (macOS) stops the run and returns to the menu; in the
   menu it exits the app. The run's report is also printed (stdout / logcat), as on the command line.
+- Android background (another app in front, e.g. a share target): nothing is drawn until the app is back. A run
+  pauses at its next `gpu.present` (`run: paused (app in the background)`, then `run: resumed after T s (excluded
+  from the measurement)`): intervals spanning the pause are dropped, measured time and `--time-limit` leave it out.
 
 Back or Escape during a command-line run stops it the same way (report printed, exit 1).
 
@@ -113,7 +116,9 @@ Losing the keystore means users must uninstall to move to APKs signed with a new
 At the end of the run, one row per timer, gpu rows first, then cpu, by name:
 
 - `gpu busy`, `gpu interval`, `cpu interval`: automatic per-frame timers (GPU frame duration, GPU and CPU
-  frame-to-frame time).
+  frame-to-frame time). GPU start timestamps wait for all earlier GPU work, so overlapping frames are not counted
+  twice: `gpu busy` stays at or below `gpu interval`. The frame opens (waits for a free frame slot, acquires) inside
+  the previous `gpu.present`, so that wait is in `cpu interval`, not in script timers.
 - One row per `gpu.timer` / `pxb.cpu_timer`.
 - Columns: n, total, mean, sd, median, p99, p95, min, max in ms, with Hz in brackets (`+-` Hz for sd).
 - `run: vulkan V, N frames in T s = F fps, display H Hz (refresh X ms)`: the `--vulkan` path, measured frames (after

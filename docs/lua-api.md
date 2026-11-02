@@ -26,13 +26,13 @@ vb:open(); vb:write(0, {0, -0.5, 0.5, 0.5, -0.5, 0.5}); vb:close()
 local ib = gpu.buffer{size = 6, usage = "index"}
 ib:open(); ib:write(0, string.pack("<I2I2I2", 0, 1, 2)); ib:close()
 
-local timer = gpu.timer("draw")
+local timer = gpu.timer("pass")
 for _ = 1, pxb.args.frames_warmup + pxb.args.frames do
-  gpu.begin_pass{clear = {0, 0, 0, 1}}
   timer:start()
+  gpu.begin_pass{clear = {0, 0, 0, 1}}
   gpu.draw{pipeline = pipe, vertex_buffers = {vb}, index_buffer = ib, index_type = "u16", count = 3}
-  timer:stop()
   gpu.end_pass()
+  timer:stop()
   gpu.present()
 end
 ```
@@ -138,16 +138,20 @@ Inside a pass only.
 
 ### gpu.present() -> presented
 
-Ends the frame: submits, presents (not in `--offscreen`), handles window events, the warm-up reset and swapchain
-recreation. Returns whether an image reached the screen. Raises `quit requested` once the window is closed, and
-`stopped (back)` on Back (Android) / Escape (macOS): the run ends with its report (command line: exit 1; menu: back
-to the menu).
+Ends the frame: submits, presents (not in `--offscreen`) and the warm-up reset, then yields to the app (the script
+runs as a coroutine). Between frames the app handles window events, swapchain recreation and the Android background
+pause, then resumes the script. Returns whether an image reached the screen. When the window is closed, on Back
+(Android) / Escape (macOS), at `--time-limit` and after `--screenshot` the app does not resume the script: the run ends
+there, with its report (Back and quit: command line exit 1, menu shows it stopped). Call it from the script's own code
+or functions it calls (`pcall` is fine), not while a `require`d module's top level runs.
 
 ### gpu.timer(name) -> timer
 
 GPU timestamp timer. `timer:start()` / `timer:stop()` in the same frame (nested timers stop in reverse order);
-`timer:results()` returns the durations in nanoseconds. Each timer is a report row and a Tracy GPU zone. Timestamps
-inside a pass are not meaningful on tiled GPUs (Apple): time the whole pass there.
+`timer:results()` returns the durations in nanoseconds. The start timestamp waits for all earlier GPU work, so a timer
+covers its commands only, not work still running from before it. Each timer is a report row and a Tracy GPU zone. Timestamps
+inside a pass are not meaningful on tiled GPUs (Apple, Mali: start and stop read the same value, 0): time the whole
+pass.
 
 ### gpu.swapchain_size() -> width, height
 
@@ -216,4 +220,4 @@ column-major (row `r`, column `c` at index `c * 4 + r + 1`).
 ## require(name)
 
 Runs `scripts/<name>.lua` once (text only, `name` passed as its argument) and caches its result (`true` when it
-returns nil).
+returns nil). Module top levels run inside a C call: they cannot call `gpu.present` (load modules first, then loop).
