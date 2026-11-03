@@ -217,7 +217,7 @@ header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-
 header b { font-size: 15px; }
 header nav a { margin-right: 14px; }
 header .gen { color: var(--muted); margin-left: auto; font-size: 12px; }
-main { padding: 16px; max-width: 1600px; margin: 0 auto; }
+main { padding: 16px; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 nav a.on { font-weight: 600; text-decoration: underline; }
@@ -256,8 +256,6 @@ dialog#run .hd { position: sticky; top: 0; z-index: 2; display: flex; gap: 10px;
   background: var(--panel); border-bottom: 1px solid var(--line); }
 dialog#run .hd button { margin-left: auto; background: none; border: 0; color: var(--fg); font-size: 20px; cursor: pointer; }
 dialog#run .wrap { margin: 0 12px; }
-.runrow { padding: 6px 12px; border-top: 1px solid var(--line); cursor: pointer; }
-.runrow:hover { background: var(--head); }
 details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; }
 details > summary { padding: 8px 12px; cursor: pointer; }
 details > .wrap { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; max-height: 70vh; overflow: auto; }
@@ -269,12 +267,34 @@ details > .wrap { border: 0; border-top: 1px solid var(--line); border-radius: 0
 .seg a.on { background: var(--accent); color: var(--bg); text-decoration: none; }
 .devpick label { margin-right: 10px; white-space: nowrap; font-size: 13px; }
 .pct { display: inline-block; height: 8px; background: var(--accent); border-radius: 2px; vertical-align: middle; margin-right: 6px; }
-.compare td.c { text-align: center; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
-.compare th.c { writing-mode: vertical-rl; transform: rotate(180deg); text-align: left; max-height: 220px; font-weight: 500; }
 .legend { font-size: 12px; color: var(--muted); }
+.pick { display: inline-block; position: relative; margin: 0; }
+.pick > summary { padding: 4px 9px; font-size: 13px; white-space: nowrap; }
+.pick.on > summary { color: var(--accent); font-weight: 600; }
+.pick > .opts { position: absolute; z-index: 6; top: 100%; left: 0; margin-top: 4px; min-width: 220px; max-width: min(560px, 90vw);
+  max-height: 50vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+  box-shadow: 0 4px 16px #0003; }
+.pick .opts label { display: block; white-space: nowrap; font-size: 13px; }
+.bar label { white-space: nowrap; font-size: 13px; }
+.bar label.txt input { padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); width: 150px; }
+.bar label.txt.on { color: var(--accent); font-weight: 600; }
+.bar label.txt.on input { border-color: var(--accent); }
+.bar button { padding: 4px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--accent); cursor: pointer; }
+.bar button:disabled { border-color: var(--line); color: var(--muted); cursor: default; }
+/* Runs list: always-visible vertical scroll bar; styled ::-webkit-scrollbar keeps macOS overlay bars from hiding. */
+.runlist { max-height: 40vh; overflow-y: scroll; }
+.runlist::-webkit-scrollbar { width: 12px; height: 12px; }
+.runlist::-webkit-scrollbar-track { background: var(--head); }
+.runlist::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 6px; border: 3px solid var(--head); }
+.cmp th { position: static; white-space: normal; font-weight: 500; }
+.cmp button.del { margin-left: 6px; padding: 1px 7px; font-size: 12px; border: 1px solid var(--no); border-radius: 5px;
+  background: var(--panel); color: var(--no); cursor: pointer; }
+.cmp button.del:hover { background: var(--no-bg); }
+.cmp th.grp, .cmp .g0 { border-left: 2px solid var(--muted); }
+.cmp td.c { text-align: center; white-space: nowrap; }
 .tag.st1 { border-color: #d97706; color: #d97706; }
 .tag.st2 { border-color: var(--no); color: var(--no); background: var(--no-bg); }
-.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 8px; padding: 8px 12px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr)); gap: 8px; padding: 8px 12px; }
 svg.chart { width: 100%; height: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 svg.chart .ln { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 svg.chart .band { stroke: none; opacity: 0.18; }
@@ -287,8 +307,8 @@ svg.chart rect.st2 { fill: #dc2626; opacity: 0.22; }
 svg.chart rect.hit { fill: transparent; }
 svg.chart rect.hit.on { fill: var(--fg); opacity: 0.08; }
 svg.chart .ax { stroke: var(--line); vector-effect: non-scaling-stroke; }
-svg.chart text { fill: var(--muted); font-size: 10px; }
-svg.chart .ttl { fill: var(--fg); font-size: 11px; }
+svg.chart text { fill: var(--muted); font-size: 14px; }
+svg.chart .ttl { fill: var(--fg); font-size: 15px; }
 </style>
 </head>
 <body>
@@ -478,7 +498,7 @@ const FORMAT_HEAD = ["VkFormat", "name", "optimal tiling", "linear tiling", "buf
 const formatRows = d => Object.entries(d.formats || {}).map(([k, [lin, opt, buf]]) =>
   [k, [["num", k], ["k", esc(T.formats[k] || "?")], ["", featTags(opt)], ["", featTags(lin)], ["", featTags(buf)]]]);
 const extRows = exts => Object.entries(exts || {}).map(([k, v]) => [k, [["k", esc(k)], ["num", v]]]);
-const TIMER_COLS = ["n", "median_ms", "p95_ms", "p99_ms", "mean_ms", "sd_ms", "min_ms", "max_ms"];
+const TIMER_COLS = ["p95_ms", "p99_ms", "median_ms", "mean_ms", "sd_ms", "min_ms", "max_ms", "n"];
 
 // Thermal status numbers per platform (docs/running.md, Report).
 const STATUS = {android: ["none", "light", "moderate", "severe", "critical", "emergency", "shutdown"],
@@ -491,17 +511,20 @@ function thermalMax(r) {
   return {status: Math.max(...s.thermal_status), headroom: Math.max(...s.thermal_headroom),
     start: s.thermal_headroom[0], end: s.thermal_headroom[s.thermal_headroom.length - 1]};
 }
-function thermalTag(r) {
+// short: first letter only (comparison table), full name in the tooltip.
+const statusShort = name => name.charAt(0).toUpperCase();
+function thermalTag(r, short) {
   const m = thermalMax(r), os = r.device_info?.os;
   if (!m || !m.status) return "";
-  return `<span class="tag ${statusCls(m.status)}" title="peak thermal status">${esc(statusName(os, m.status))}</span>`;
+  const name = statusName(os, m.status);
+  return `<span class="tag ${statusCls(m.status)}" title="peak thermal status: ${esc(name)}">${esc(short ? statusShort(name) : name)}</span>`;
 }
 
 // Inline SVG line chart over the run's windows. lines: [{v, lo, hi, cls}] (lo / hi: optional band); null = gap.
 // rects: optional per-window background classes. pad: y range margin, as a fraction of max - min.
 // name / tips: short name and per-window values, shown in the title while any chart of the run is hovered (syncHover).
 function chart(t, lines, o) {
-  const W = 600, H = 130, L = 46, R = 8, T = 18, B = 18;
+  const W = 600, H = 160, L = 58, R = 8, T = 26, B = 22;
   const vals = lines.flatMap(l => [...l.v, ...(l.hi || []), ...(l.lo || [])]).filter(v => v !== null);
   let lo = o.ymin ?? Math.min(...vals), hi = Math.max(o.ymaxMin ?? -Infinity, ...vals);
   if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
@@ -527,7 +550,7 @@ function chart(t, lines, o) {
   svg += `<line class="ax" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"/>`;
   svg += `<text class="lab" x="${L - 4}" y="${T + 4}" text-anchor="end">${fmt(hi)}</text><text class="lab" x="${L - 4}" y="${H - B}" text-anchor="end">${fmt(lo)}</text>`;
   svg += `<text class="lab" x="${L}" y="${H - 4}">0 s</text><text class="lab" x="${W - R}" y="${H - 4}" text-anchor="end">${tmax.toFixed(1)} s</text>`;
-  svg += `<text class="ttl" x="${L}" y="12" data-t="${esc(o.title)}" data-n="${esc(o.name)}">${esc(o.title)}</text>`;
+  svg += `<text class="ttl" x="${L}" y="17" data-t="${esc(o.title)}" data-n="${esc(o.name)}">${esc(o.title)}</text>`;
   if (o.tips) o.tips.forEach((tip, i) => { svg += `<rect class="hit" data-i="${i}" data-v="${esc(tip)}" x="${x0(i)}" y="${T}" width="${x(i) - x0(i)}" height="${H - T - B}"/>`; });
   return `<svg class="chart ${o.cls || ""}" viewBox="0 0 ${W} ${H}">${svg}</svg>`;
 }
@@ -575,12 +598,13 @@ function runSummary(r) {
   return `<b>${esc(r.script)}</b> <b>${fpsStr(r)} fps</b> ${tags(flags)} ${thermalTag(r)}${buildWarn(r)}`;
 }
 function runBody(r) {
-  const timers = (r.timers || []).map(t => `<tr class="f ${esc(t.kind)}"><td>${esc(t.kind)}</td><td class="k">${esc(t.name)}</td>
+  const byKindName = (a, b) => String(a.kind).localeCompare(String(b.kind)) || String(a.name).localeCompare(String(b.name));
+  const timers = (r.timers || []).slice().sort(byKindName).map(t => `<tr class="f ${esc(t.kind)}"><td>${esc(t.kind)}</td><td class="k">${esc(t.name)}</td>
     ${TIMER_COLS.map(c => `<td class="num">${t[c] == null ? "" : (c === "n" ? t[c] : (+t[c]).toFixed(3))}</td>`).join("")}</tr>`).join("");
   const m = thermalMax(r);
   const thermal = m ? `thermal headroom ${m.start} → ${m.end} (max ${m.headroom}), status max ${esc(statusName(r.device_info?.os, m.status))} · ` : "";
   const battery = r.battery_c ? `battery ${r.battery_c} C · ` : "";
-  return `${runCharts(r)}<div class="wrap"><table><thead><tr><th>kind</th><th>timer</th>${TIMER_COLS.map(c => `<th>${c}</th>`).join("")}</tr></thead>
+  return `${runCharts(r)}<div class="wrap"><table><thead><tr><th>kind</th><th>name</th>${TIMER_COLS.map(c => `<th>${c}</th>`).join("")}</tr></thead>
     <tbody>${timers}</tbody></table></div>
     <div class="muted" style="padding:6px 12px">frames ${r.measured_frames} (+${r.frames_warmup} warmup) in ${(+r.measured_time_s).toFixed(2)} s ·
     ${thermal}${battery}file ${esc(r.file)}</div>`;
@@ -593,6 +617,22 @@ function showRun(i, j) {
   dlg.showModal();
 }
 
+// Runs of device i, one row each; a click opens the run modal.
+function runsTable(i) {
+  const runs = DEVS[i].runs;
+  if (!runs.length) return '<p class="muted" style="padding:0 12px">none</p>';
+  const rows = runs.map((r, j) => {
+    const opts = [r.offscreen ? "offscreen" : r.present_mode, r.time_limited && "time limited"].filter(Boolean);
+    return `<tr class="f click" onclick="showRun(${i}, ${j})"><td class="k">${esc(r.script)}</td>
+      <td class="num"><b>${fpsStr(r)}</b></td><td class="num">${r.measured_frames ?? ""}</td>
+      <td class="num">${r.measured_time_s === undefined ? "" : (+r.measured_time_s).toFixed(2)}</td><td>${esc(r.vulkan ?? "")}</td>
+      <td>${tags(opts)} ${thermalTag(r)}${buildWarn(r)}</td></tr>`;
+  }).join("");
+  const heads = ["Demo", "FPS", "Frames", "Time s", "Vulkan", "Options"];
+  return `<div class="wrap"><table><thead><tr>${heads.map(h => `<th class="sort">${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
 function viewDevice(i, anchor) {
   const dev = DEVS[i];
   if (!dev) { app.innerHTML = "unknown device"; return; }
@@ -600,6 +640,7 @@ function viewDevice(i, anchor) {
     <div class="muted">${esc(dev.info.name || "")} · ${esc(driverStr(dev.info))} · ${esc(osStr(dev.info))}</div>
     <div class="bar"><input type="search" id="flt" placeholder="filter rows (limits, features, extensions, formats...)" oninput="applyFilter(this.value)">
     <span class="legend">Vulkan 1.1 and 1.3 instances together: a badge marks what only one has, [1.1] / [1.3] values that differ.</span></div>`;
+  html += section(`Runs (${dev.runs.length})`, runsTable(i), true, "runs");
   html += section("Device info", kvTable(dev.info), true);
   const inst = MODES.map(x => [x, dev.vulkan[x]]);
   const devs = MODES.map(x => [x, vkDevice(dev, x)]);
@@ -630,7 +671,6 @@ function viewDevice(i, anchor) {
   } else {
     html += '<p class="muted">No Vulkan info in the result files of this device.</p>';
   }
-  html += section(`Runs (${dev.runs.length})`, `<div style="padding:0 10px">${dev.runs.map((r, j) => `<div class="runrow" onclick="showRun(${i}, ${j})">${runSummary(r)}</div>`).join("") || '<p class="muted">none</p>'}</div>`, true, "runs");
   html += section("Files", `<div style="padding:6px 12px">${dev.files.map(esc).join("<br>")}</div>`, false);
   app.innerHTML = html;
   // Filtering opens every section so matches are visible.
@@ -642,39 +682,211 @@ function viewDevice(i, anchor) {
 
 // ---------- runs
 
-function viewRuns() {
-  const scripts = [...new Set(DEVS.flatMap(d => d.runs.map(r => r.script)))].sort();
-  const head = DEVS.map((d, i) => `<th class="c"><a href="#/device/${i}/runs">${esc(d.label)}</a></th>`).join("");
-  const rows = scripts.map(s => {
-    let ndev = 0;
-    const cells = DEVS.map((d, i) => {
-      const rs = d.runs.filter(r => r.script === s);
-      if (!rs.length) return '<td class="c"><span class="miss">-</span></td>';
-      ndev++;
-      return `<td class="c">${rs.slice().sort((a, b) => String(a.vulkan).localeCompare(String(b.vulkan))).map(r =>
-        `<a class="tag" href="javascript:showRun(${i}, ${d.runs.indexOf(r)})">vk${esc(r.vulkan)} <b>${fpsStr(r)}</b></a>`).join("")}</td>`;
-    }).join("");
-    return `<tr class="f"><td class="k">${esc(s)}</td><td class="num">${ndev}/${DEVS.length}</td>${cells}</tr>`;
+// Run fields to filter on; all but script can split a comparison group into sub-columns.
+const RUN_FIELDS = [
+  ["device", "Device", x => x.d.label],
+  ["script", "Script", x => x.r.script],
+  ["vulkan", "Vulkan", x => "vk" + x.r.vulkan],
+  ["file", "File", x => x.r.file],
+  ["version", "App version", x => [x.r.device_info?.version, x.r.device_info?.git].filter(Boolean).join(" ") || "unknown"],
+];
+const SPLIT_FIELDS = ["device", "vulkan", "file", "version"];
+const FIELD_LABEL = Object.fromEntries(RUN_FIELDS.map(([k, l]) => [k, l]));
+const MAX_GROUPS = 4;
+const ALL_RUNS = DEVS.flatMap((d, i) => d.runs.map((r, j) => ({d, i, j, r})));
+ALL_RUNS.forEach(x => { x.v = Object.fromEntries(RUN_FIELDS.map(([k, , get]) => [k, get(x)])); });
+const byText = (a, b) => String(a).localeCompare(String(b), undefined, {numeric: true});
+const distinct = (runs, k) => [...new Set(runs.map(x => x.v[k]))].sort(byText);
+
+// Fields filtered by picking values; the others by text.
+const PICK_FIELDS = ["vulkan"];
+
+// Runs view state, kept in the hash (#/runs/<json>). f: {field: [values] (pick) or "text"} (missing or empty = any),
+// split: fields that split a group into sub-columns, groups: saved [{f, split}] comparison columns.
+let RS = {f: {}, split: ["device", "vulkan"], groups: []};
+// Text filter: case-insensitive substring; comma-separated terms match any.
+const terms = q => q.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+const fieldMatch = (v, f) => Array.isArray(f) ? !f.length || f.includes(v) :
+  !terms(f || "").length || terms(f).some(t => String(v).toLowerCase().includes(t));
+const matches = (x, f, skip) => Object.entries(f).every(([k, c]) => k === skip || fieldMatch(x.v[k], c));
+function saveRuns() { history.replaceState(null, "", "#/runs/" + encodeURIComponent(JSON.stringify(RS))); }
+function loadRuns(s) {
+  if (!s) return;
+  try {
+    const o = JSON.parse(decodeURIComponent(s));
+    RS = {f: o.f || {}, split: o.split || [], groups: (o.groups || []).slice(0, MAX_GROUPS)};
+  } catch (e) { /* keep the current state on a bad link */ }
+}
+
+function textHtml([k, label]) {
+  const q = typeof RS.f[k] === "string" ? RS.f[k] : "";
+  return `<label class="txt ${q.trim() ? "on" : ""}">${label} <input type="search" data-text="${k}" value="${esc(q)}" placeholder="any"></label>`;
+}
+function pickHtml([k, label]) {
+  const sel = Array.isArray(RS.f[k]) ? RS.f[k] : [];
+  const opts = distinct(ALL_RUNS, k).map(v => {
+    const n = ALL_RUNS.filter(x => x.v[k] === v && matches(x, RS.f, k)).length;
+    return `<label class="${n ? "" : "miss"}"><input type="checkbox" data-pick="${k}" value="${esc(v)}" ${sel.includes(v) ? "checked" : ""}> ${esc(v)} <span class="muted">${n}</span></label>`;
   }).join("");
-  const all = DEVS.flatMap((d, i) => d.runs.map((r, j) => ({d, i, j, r})));
-  const list = all.map(({d, i, j, r}) => `<tr class="f click" onclick="showRun(${i}, ${j})"><td><a href="#/device/${i}" onclick="event.stopPropagation()">${esc(d.label)}</a></td><td class="k">${esc(r.script)}</td>
+  return `<details class="pick ${sel.length ? "on" : ""}" data-k="${k}"><summary>${label}: ${sel.length ? sel.length === 1 ? esc(sel[0]) : sel.length + " selected" : "any"}</summary>
+    <div class="opts"><a href="javascript:void 0" data-act="any" data-k="${k}">any</a>${opts}</div></details>`;
+}
+
+// Script rows x (group, sub-column) cells; a sub-column is one combination of the group's split fields that vary.
+// Text fields are plain (not escaped); compareTable renders the page table, copyCompare the clipboard one.
+function compareModel() {
+  const groups = RS.groups.map((g, gi) => {
+    const runs = ALL_RUNS.filter(x => matches(x, g.f));
+    const split = SPLIT_FIELDS.filter(k => g.split.includes(k) && distinct(runs, k).length > 1);
+    const key = x => split.map(k => x.v[k]).join(" · ");
+    const fixed = SPLIT_FIELDS.filter(k => !split.includes(k)).map(k => {
+      const vs = distinct(runs, k);
+      return vs.length === 1 ? `${FIELD_LABEL[k]}: ${vs[0]}` : vs.length ? `${FIELD_LABEL[k]}: ${vs.length} merged` : "";
+    }).filter(Boolean);
+    const cols = [...new Set(runs.map(key))].sort(byText);
+    return {name: "ABCD"[gi], runs, key, split, fixed, cols: cols.length ? cols : [null]};
+  });
+  const scripts = [...new Set(groups.flatMap(g => g.runs.map(x => x.v.script)))].sort(byText);
+  // Runs of one cell, best FPS first.
+  const cell = (g, s, c) => g.runs.filter(x => x.v.script === s && g.key(x) === c).sort((a, b) => (fpsOf(b.r) ?? -1) - (fpsOf(a.r) ?? -1));
+  return {groups, scripts, cell};
+}
+const splitLabel = g => g.split.length ? "split by " + g.split.map(k => FIELD_LABEL[k]).join(" + ") : "";
+
+function compareTable() {
+  const {groups, scripts, cell} = compareModel();
+  const h1 = groups.map((g, gi) => `<th class="grp" colspan="${g.cols.length}"><b>${g.name}</b>
+    <button class="del" data-act="del" data-g="${gi}" title="remove column ${g.name}">× remove</button> <span class="muted">${g.runs.length} runs</span>
+    <div class="muted">${[g.split.length && `<b>${esc(splitLabel(g))}</b>`, ...g.fixed.map(esc)].filter(Boolean).join(" · ")}</div></th>`).join("");
+  const h2 = groups.map(g => g.cols.map((c, ci) => `<th class="${ci ? "" : "g0"}">${c === null ? "" : esc(c) || "all"}</th>`).join("")).join("");
+  const body = scripts.map(s => `<tr><td class="k">${esc(s)}</td>${groups.map(g => g.cols.map((c, ci) => {
+    const tg = cell(g, s, c).map(x => `<a class="tag" href="javascript:showRun(${x.i}, ${x.j})" title="${esc(x.v.device)} · ${esc(x.v.vulkan)} · ${esc(x.v.file)}"><b>${fpsStr(x.r)}</b></a>${thermalTag(x.r, true)}`).join("");
+    return `<td class="c ${ci ? "" : "g0"}">${tg || '<span class="miss">-</span>'}</td>`;
+  }).join("")).join("")}</tr>`).join("");
+  return `<div class="wrap cmp"><table><thead><tr><th rowspan="2">script (FPS)</th>${h1}</tr><tr>${h2}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// Copies the comparison as an HTML table (Google Docs pastes it as a native table) plus TSV for plain text targets.
+// Cells: FPS only, so spreadsheets read numbers; peak thermal status above nominal shows as the cell background.
+// Several runs in one cell are joined by " / ".
+const THERMAL_BG = {st1: "#fde68a", st2: "#fecaca"};
+async function copyCompare(btn) {
+  const {groups, scripts, cell} = compareModel();
+  const cellRuns = (g, s, c) => cell(g, s, c).map(x => {
+    const m = thermalMax(x.r);
+    return {text: fpsStr(x.r), st: m ? m.status : 0};
+  });
+  const groupText = g => [`${g.name} (${g.runs.length} runs)`, splitLabel(g), ...g.fixed].filter(Boolean).join(" · ");
+  const colText = c => c === null ? "" : c || "all";
+  const bd = "border:1px solid #999;padding:2px 6px;";
+  let html = `<table style="border-collapse:collapse;font-family:sans-serif;font-size:10pt"><thead><tr><th rowspan="2" style="${bd}">script (FPS)</th>`;
+  html += groups.map(g => `<th colspan="${g.cols.length}" style="${bd}">${esc(groupText(g))}</th>`).join("") + "</tr><tr>";
+  html += groups.map(g => g.cols.map(c => `<th style="${bd}">${esc(colText(c))}</th>`).join("")).join("") + "</tr></thead><tbody>";
+  const tsv = [["script (FPS)", ...groups.flatMap(g => g.cols.map((c, ci) => ci ? "" : groupText(g)))],
+    ["", ...groups.flatMap(g => g.cols.map(colText))]];
+  for (const s of scripts) {
+    html += `<tr><td style="${bd}">${esc(s)}</td>`;
+    const row = [s];
+    for (const g of groups) for (const c of g.cols) {
+      const rs = cellRuns(g, s, c), st = Math.max(0, ...rs.map(x => x.st)), text = rs.map(x => x.text).join(" / ") || "-";
+      html += `<td style="${bd}text-align:right;${st ? `background:${THERMAL_BG[statusCls(st)]};` : ""}">${esc(text)}</td>`;
+      row.push(text);
+    }
+    html += "</tr>";
+    tsv.push(row);
+  }
+  html += "</tbody></table>";
+  const plain = tsv.map(r => r.join("\t")).join("\n");
+  let ok = false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({"text/html": new Blob([html], {type: "text/html"}), "text/plain": new Blob([plain], {type: "text/plain"})})]);
+    ok = true;
+  } catch (e) {
+    // Older browsers or a blocked clipboard API: copy a selected off-screen copy instead.
+    const box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:-10000px;top:0";
+    box.innerHTML = html;
+    document.body.appendChild(box);
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+    getSelection().removeAllRanges();
+    box.remove();
+  }
+  const label = btn.textContent;
+  btn.textContent = ok ? "Copied" : "Copy failed";
+  setTimeout(() => { btn.textContent = label; }, 1500);
+}
+
+function viewRuns() {
+  const open = app.querySelector(".pick[open]")?.dataset.k;
+  // Keep focus and caret in a text filter across the re-render.
+  const act = document.activeElement, foc = act?.dataset?.text, caret = foc && act.selectionStart;
+  const runs = ALL_RUNS.filter(x => matches(x, RS.f));
+  const list = runs.map(({d, i, j, r}) => `<tr class="f click" onclick="showRun(${i}, ${j})"><td><a href="#/device/${i}" onclick="event.stopPropagation()">${esc(d.label)}</a></td><td class="k">${esc(r.script)}</td>
     <td>${esc(r.vulkan)}</td><td class="num"><b>${fpsStr(r)}</b></td><td>${r.offscreen ? "offscreen" : esc(r.present_mode || "")}</td>
     <td class="num">${r.measured_frames ?? ""}</td><td class="num">${r.measured_time_s === undefined ? "" : (+r.measured_time_s).toFixed(2)}</td>
     <td data-s="${thermalMax(r)?.status ?? -1}">${thermalTag(r)}</td>
     <td>${esc(r.device_info?.version || "")} ${esc(r.device_info?.git || "")} ${buildWarn(r)}</td>
     <td class="k">${esc(r.file)}</td></tr>`).join("");
   const lh = ["Device", "Script", "Vulkan", "FPS", "Present", "Frames", "Time s", "Thermal max", "Version", "File"];
-  app.innerHTML = `
-    <div class="bar"><input type="search" placeholder="filter" oninput="applyFilter(this.value)">
-    <span class="legend">FPS per script, device and Vulkan path (one tag per run).</span></div>
-    <div class="wrap compare"><table><thead><tr><th class="sort">script</th><th class="sort">devices</th>${head}</tr></thead>
-    <tbody>${rows}</tbody></table></div>
-    <h1 style="margin-top:20px">All runs (${all.length})</h1>
-    <div class="wrap" style="max-height:70vh"><table><thead><tr>${lh.map(h => `<th class="sort">${h}</th>`).join("")}</tr></thead>
-    <tbody>${list}</tbody></table></div>`;
+  const full = RS.groups.length >= MAX_GROUPS;
+  app.innerHTML = `<div id="runsview">
+    <div class="bar">${RUN_FIELDS.map(f => PICK_FIELDS.includes(f[0]) ? pickHtml(f) : textHtml(f)).join("")}
+      <a href="javascript:void 0" data-act="clear">clear filters</a></div>
+    <h1>Runs (${runs.length} of ${ALL_RUNS.length})</h1>
+    <div class="wrap runlist"><table><thead><tr>${lh.map(h => `<th class="sort">${h}</th>`).join("")}</tr></thead>
+    <tbody>${list}</tbody></table></div>
+    <h1 style="margin-top:16px">Comparison</h1>
+    <div class="bar"><span class="legend">split by</span>${SPLIT_FIELDS.map(k =>
+      `<label><input type="checkbox" data-split="${k}" ${RS.split.includes(k) ? "checked" : ""}> ${FIELD_LABEL[k]}</label>`).join("")}
+      <button data-act="add" ${full || !runs.length ? "disabled" : ""}>Add as column (${RS.groups.length}/${MAX_GROUPS})</button>
+      ${RS.groups.length ? '<button data-act="delall">Remove all columns</button> <button data-act="copy">Copy table</button>' : ""}</div>
+    ${RS.groups.length ? compareTable() : '<p class="muted">Filter the runs above, then "Add as column".</p>'}</div>`;
+  if (open) app.querySelector(`.pick[data-k="${open}"]`).open = true;
+  if (foc) { const t = app.querySelector(`input[data-text="${foc}"]`); t.focus(); t.setSelectionRange(caret, caret); }
 }
 
-// ---------- router: #/  #/device/<i>[/<mode>|/runs]  #/runs
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (!t.closest?.("#runsview")) return;
+  if (t.dataset.pick) {
+    const k = t.dataset.pick, sel = new Set(Array.isArray(RS.f[k]) ? RS.f[k] : []);
+    if (t.checked) sel.add(t.value); else sel.delete(t.value);
+    RS.f[k] = [...sel];
+  } else if (t.dataset.split) {
+    RS.split = SPLIT_FIELDS.filter(k => k === t.dataset.split ? t.checked : RS.split.includes(k));
+  } else return;
+  saveRuns();
+  viewRuns();
+});
+document.addEventListener("input", e => {
+  const t = e.target;
+  if (!t.dataset?.text || !t.closest("#runsview")) return;
+  RS.f[t.dataset.text] = t.value;
+  saveRuns();
+  viewRuns();
+});
+document.addEventListener("click", e => {
+  // One filter dropdown open at a time; a click outside closes it.
+  app.querySelectorAll(".pick[open]").forEach(p => { if (!p.contains(e.target)) p.open = false; });
+  const a = e.target.closest?.("#runsview [data-act]");
+  if (!a) return;
+  const act = a.dataset.act;
+  if (act === "copy") { copyCompare(a); return; }
+  if (act === "any") RS.f[a.dataset.k] = [];
+  else if (act === "clear") RS.f = {};
+  else if (act === "add" && RS.groups.length < MAX_GROUPS) RS.groups.push(JSON.parse(JSON.stringify({f: RS.f, split: RS.split})));
+  else if (act === "del") RS.groups.splice(+a.dataset.g, 1);
+  else if (act === "delall") RS.groups = [];
+  else return;
+  saveRuns();
+  viewRuns();
+});
+
+// ---------- router: #/  #/device/<i>[/<mode>|/runs]  #/runs[/<state json>]
 
 function route() {
   const p = location.hash.replace(/^#\/?/, "").split("/");
@@ -682,7 +894,7 @@ function route() {
   document.getElementById("nav").innerHTML = [["", "Devices"], ["runs", "Runs"]].map(([k, l]) =>
     `<a class="${top === k || (k === "" && top === "device") ? "on" : ""}" href="#/${k}">${l}</a>`).join("");
   if (top === "device") viewDevice(+p[1], p[2] === "runs" ? "runs" : null);
-  else if (top === "runs") viewRuns();
+  else if (top === "runs") { loadRuns(p.slice(1).join("/")); viewRuns(); }
   else viewOverview();
 }
 window.addEventListener("hashchange", () => { route(); if (!location.hash.endsWith("/runs")) window.scrollTo(0, 0); });
