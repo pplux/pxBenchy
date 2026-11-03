@@ -3,7 +3,7 @@
 ## Command line
 
 ```
-pxbenchy [--validation] [--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] [--time-limit S] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] [--vulkan-info] [<script>]
+pxbenchy [--validation] [--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] [--time-limit S] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] [--vulkan-info] [--run-all] [--save] [<script>]
 ```
 
 Without a script the app opens the menu (below); `--vulkan`, `--validation`,
@@ -16,12 +16,14 @@ Without a script the app opens the menu (below); `--vulkan`, `--validation`,
 | `--vulkan auto\|1.1\|1.3` | auto | Vulkan path: 1.1 core (render passes, sync1) or 1.3 (dynamic rendering, synchronization2). `auto` probes the Vulkan driver at startup (temporary instance, no validation) and picks 1.3 when a device has 1.3 + dynamicRendering + synchronization2, else 1.1. An explicit 1.3 on a device without them fails: no fallback, exits 1. The resolved path is shown as `vulkan=` on the startup line (`vulkan=1.3 (auto)` when probed), `vkX.Y` on the HUD, in the `run:` line and as `"vulkan"` in the JSON report |
 | `--frames N` | 3600 | measured frames; 0 = run until the window closes |
 | `--frames-warmup N` | 60 | frames left out of the stats before measuring, minimum 1: frame 1, the setup frame, is always warm-up. The run ends after `--frames-warmup` + `--frames` presents |
-| `--time-limit S` | 0 (off) | end the run normally (with the report) after S seconds of measured frames (after warm-up); the report says `time limit: S s reached`. Script runs only: the menu has its own setting |
+| `--time-limit S` | 0 (off) | end the run normally (with the report) after S seconds of measured frames (after warm-up); the report says `time limit: S s reached`. Without a script: the menu's initial time limit (else 30 s) |
 | `--no-hud` | HUD on | no on-screen stats |
 | `--offscreen` | off | render to an own image, no vsync; about once per second the last frame is copied to the screen. The intervals spanning a copy and the frame right after it are left out of the timer stats (on Android the compositor's work on the new image slows that frame: Pixel 9 +20 ms); fps still includes them |
 | `--json` | off | print the report as one JSON line |
 | `--screenshot file.png` | off | save frame `--screenshot-frame` as an RGBA8 PNG (scene only, no HUD, view orientation), print `screenshot: path (frame N, WxH)` and exit 0 without a report; error (exit 1) if the script ends first. Android: use an app-writable absolute path |
 | `--screenshot-frame N` | 1 | 1-based frame (HUD frame number) to capture; frames the swapchain cannot provide (resize, minimized) are not drawn or counted |
+| `--run-all` | off | without a script: once the menu is up, press "Run all" (every script on 1.1, then on 1.3; same code as the button). The menu stays open after it (unless `--save`) |
+| `--save` | off | with a script: save its run as a result file; with `--run-all`: press Save when Run all ends. Both print `results: ...` (Android `Documents/pxBenchy/`) and exit (1 when the save fails) |
 | `--vulkan-info` | off | print the Vulkan info (see [Vulkan info](#vulkan-info)) and exit 0; no window, other options ignored |
 
 ## Menu
@@ -42,7 +44,7 @@ column (settings + scripts) scrolls with a finger drag; header buttons wrap when
 - Results: one row per run (script, vulkan, `val` / `off` options, fps, median gpu busy and cpu frame interval in ms),
   kept for the app session in run order ("Run all" adds one row per script and Vulkan). Tap a row for the median of each
   timer. Clear empties the table. Save saves every run in the table. The status line shows the path (macOS)
-  or `Download/pxBenchy/<name>` (Android).
+  or `Documents/pxBenchy/<name>` (Android).
 - Share JSON, Share text, Copy: send the table's results JSON (disabled while the table is empty). Copy and Share
   text write no file; Share JSON saves the table to a new file and shares it. Android: Share JSON opens the share sheet with the JSON file
   (`application/json`, subject `pxBenchy results <model>`; mail, Slack, Drive, ...); Share text opens it with the
@@ -82,6 +84,9 @@ build type, e.g. `cmake -DPXB_TRACY=ON -B build-release` to profile a release bu
 android/build_apk.sh && adb install -r build-android-debug/pxbenchy.apk
 adb shell am start -S -n com.pplux.pxbenchy/android.app.NativeActivity --es args "'--frames 1000 scripts/triangle.lua'"
 adb logcat -s pxbenchy
+# every script on 1.1 and 1.3, then save; pull once `results: ...` is logged
+adb shell am start -S -n com.pplux.pxbenchy/android.app.NativeActivity --es args "'--run-all --save --time-limit 20'"
+adb pull /sdcard/Documents/pxBenchy
 ```
 
 Without `--es args` (or from the launcher) the app opens the menu. Or in one step: `android/install_and_run.sh
@@ -194,7 +199,7 @@ The menu's Save and Share JSON write one JSON file, every run of the table in ru
 `device` is the `device_info` object of the device at save time (`null` when no device is up); `runs` holds the JSON
 report of each run, as printed by `--json`, each with its own `device_info` (a table with 1.1 and 1.3 runs keeps the
 right `api_version` per run). `vulkan` is the Vulkan info below, queried once at startup. Runs without a report (the
-run could not start) are left out. Single-script runs (command line, adb) write no file.
+run could not start) are left out. Single-script runs (command line, adb) write no file unless `--save`.
 
 `tools/report.py <dir> [-o report.html]` (Python 3, no dependencies) reads every result file under `<dir>` and writes
 one self-contained HTML page (default `<dir>/report.html`): devices overview, per-device Vulkan info (vk11 and vk13
@@ -229,5 +234,6 @@ Flags and enums are their raw numbers.
   digits, `.`, `-`, `_` become `_`; `device` when unknown).
 - macOS: `results/` under the working directory (created when missing, gitignored); an existing name gets `-1`, `-2`,
   ... before `.json`.
-- Android: MediaStore Downloads, `Download/pxBenchy/` (Files app: Downloads > pxBenchy), `application/json`, no storage
-  permission. The printed `content://media/...` URI is what sharing uses; MediaStore renames on a name clash.
+- Android: MediaStore Files, `Documents/pxBenchy/` (`/sdcard/Documents/pxBenchy`; Files app: Documents > pxBenchy),
+  `application/json`, no storage permission. The printed `content://media/...` URI is what sharing uses; MediaStore
+  renames on a name clash.

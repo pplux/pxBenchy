@@ -40,6 +40,8 @@ struct UpdateCheck {
 struct Menu {
   RunOptions ro;
   long long time_limit = 30;        // each run ends after this many s of measured frames, 0 = off
+  bool save_after_run_all = false;  // MenuStart::save: Save once the next Run all ends, then leave the menu
+  int exit_code = -1;               // >= 0: leave the menu with it (set by save_after_run_all)
   bool vk13 = false;                // gpu_vk13_supported()
   float scale = 1.0f;               // platform_ui_scale()
   PlatformInsets insets;            // platform_safe_insets(), kept clear of the full-screen windows
@@ -137,7 +139,7 @@ static std::string save_results(Menu* m, Session* s) {
     return "";
   }
 #if defined(__ANDROID__) // where is a content:// URI: show the file name instead
-  add_status(m, "saved Download/pxBenchy/" + name);
+  add_status(m, "saved Documents/pxBenchy/" + name);
 #else
   add_status(m, "saved " + where);
 #endif
@@ -554,6 +556,8 @@ static void run_action(Menu* m, Session* s) {
         m->status = done + "  " + m->status;
       }
       if (runs < total && !s->quit) { m->status += "  (run all stopped after " + std::to_string(runs) + ")"; }
+      if (m->save_after_run_all && !s->quit) { m->exit_code = save_results(m, s).empty() ? 1 : 0; }
+      m->save_after_run_all = false;
       break;
     }
     case Menu::Action::clear: m->results.clear(); break;
@@ -573,9 +577,12 @@ static void run_action(Menu* m, Session* s) {
   m->action = Menu::Action::none;
 }
 
-int menu_run(Session* s, const RunOptions& ro) {
+int menu_run(Session* s, const RunOptions& ro, const MenuStart& start) {
   Menu m;
   m.ro = ro;
+  m.time_limit = start.time_limit;
+  if (start.run_all) { m.action = Menu::Action::run_all; } // done after the first menu frame, as a click
+  m.save_after_run_all = start.save;
   m.ro.script.clear();
   m.ro.screenshot.clear();
   m.vk13 = gpu_vk13_supported();
@@ -622,6 +629,7 @@ int menu_run(Session* s, const RunOptions& ro) {
     if (m.action != Menu::Action::none) {
       run_action(&m, s);
       redraw = REDRAW_FRAMES;
+      if (m.exit_code >= 0) { return m.exit_code; }
     }
   }
   return 0;

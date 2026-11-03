@@ -31,7 +31,7 @@ std::vector<std::pair<std::string, std::string>> platform_device_info();
 
 // Saves a results file (`name` = file name, no directory; `json` = contents) where the user can reach it; main thread.
 // macOS: `results/<name>` relative to the working directory (directory created; an existing file is not overwritten:
-// `-1`, `-2`, ... before the extension). Android: MediaStore Downloads `Download/pxBenchy/<name>` (application/json,
+// `-1`, `-2`, ... before the extension). Android: MediaStore Files `Documents/pxBenchy/<name>` (application/json,
 // IS_PENDING while writing; MediaStore renames on a name clash), no storage permission (API 29+). *where = the path
 // (macOS) | the `content://` URI (Android, for sharing). False on failure (reason on stderr).
 bool platform_save_results(const std::string& name, const std::string& json, std::string* where);

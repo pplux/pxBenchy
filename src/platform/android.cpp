@@ -344,8 +344,8 @@ static bool save_results_jni(JNIEnv* env, jobject activity, const std::string& n
                              std::string* where) {
   jclass cv_cls = jni_class(env, "android/content/ContentValues");
   jclass int_cls = cv_cls ? jni_class(env, "java/lang/Integer") : nullptr;
-  jclass dl_cls = int_cls ? jni_class(env, "android/provider/MediaStore$Downloads") : nullptr;
-  jclass cr_cls = dl_cls ? jni_class(env, "android/content/ContentResolver") : nullptr;
+  jclass files_cls = int_cls ? jni_class(env, "android/provider/MediaStore$Files") : nullptr;
+  jclass cr_cls = files_cls ? jni_class(env, "android/content/ContentResolver") : nullptr;
   jclass os_cls = cr_cls ? jni_class(env, "java/io/OutputStream") : nullptr;
   jclass uri_cls = os_cls ? jni_class(env, "android/net/Uri") : nullptr;
   if (!uri_cls) { return false; }
@@ -367,22 +367,26 @@ static bool save_results_jni(JNIEnv* env, jobject activity, const std::string& n
   jmethodID uri_str = jni_method(env, uri_cls, "toString", "()Ljava/lang/String;");
   jmethodID int_of = env->GetStaticMethodID(int_cls, "valueOf", "(I)Ljava/lang/Integer;");
   if (jni_failed(env, "valueOf")) { int_of = nullptr; }
-  jfieldID dl_uri_f = env->GetStaticFieldID(dl_cls, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
-  if (jni_failed(env, "EXTERNAL_CONTENT_URI")) { dl_uri_f = nullptr; }
+  jmethodID files_uri = env->GetStaticMethodID(files_cls, "getContentUri", "(Ljava/lang/String;)Landroid/net/Uri;");
+  if (jni_failed(env, "getContentUri")) { files_uri = nullptr; }
   if (!cv_init || !cv_put_str || !cv_put_int || !cv_clear || !get_cr || !cr_insert || !cr_update || !cr_delete ||
-      !cr_open || !os_write || !os_close || !uri_str || !int_of || !dl_uri_f) {
+      !cr_open || !os_write || !os_close || !uri_str || !int_of || !files_uri) {
     return false;
   }
 
-  jobject downloads = env->GetStaticObjectField(dl_cls, dl_uri_f);
+  // Files collection: Documents/ is not allowed in the Downloads one (Download/ only).
+  jstring vol = env->NewStringUTF("external");
+  if (jni_failed(env, "NewStringUTF") || !vol) { return false; }
+  jobject files = env->CallStaticObjectMethod(files_cls, files_uri, vol);
+  if (jni_failed(env, "MediaStore.Files.getContentUri") || !files) { return false; }
   jobject cr = env->CallObjectMethod(activity, get_cr);
-  if (jni_failed(env, "getContentResolver") || !downloads || !cr) { return false; }
+  if (jni_failed(env, "getContentResolver") || !cr) { return false; }
   jobject values = env->NewObject(cv_cls, cv_init);
   if (jni_failed(env, "ContentValues()") || !values) { return false; }
   jstring k_pending = env->NewStringUTF("is_pending");
   if (jni_failed(env, "NewStringUTF") || !k_pending) { return false; }
   const char* const strs[][2] = {
-      {"_display_name", name.c_str()}, {"mime_type", "application/json"}, {"relative_path", "Download/pxBenchy"}};
+      {"_display_name", name.c_str()}, {"mime_type", "application/json"}, {"relative_path", "Documents/pxBenchy"}};
   for (const auto& kv : strs) {
     jstring k = env->NewStringUTF(kv[0]);
     jstring v = k ? env->NewStringUTF(kv[1]) : nullptr;
@@ -394,7 +398,7 @@ static bool save_results_jni(JNIEnv* env, jobject activity, const std::string& n
   if (jni_failed(env, "Integer.valueOf")) { return false; }
   env->CallVoidMethod(values, cv_put_int, k_pending, one);
   if (jni_failed(env, "ContentValues.put")) { return false; }
-  jobject uri = env->CallObjectMethod(cr, cr_insert, downloads, values);
+  jobject uri = env->CallObjectMethod(cr, cr_insert, files, values);
   if (jni_failed(env, "ContentResolver.insert")) { return false; }
   if (!uri) {
     fprintf(stderr, "error: results: ContentResolver.insert returned null\n");

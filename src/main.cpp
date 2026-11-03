@@ -16,6 +16,8 @@ struct Options {
   bool json = false;
   bool menu = false;        // no script: launcher menu (menu.h)
   bool vulkan_info = false; // print gpu_vulkan_info_json and exit
+  bool time_limit = false;  // --time-limit given (the menu starts at it instead of MenuStart's default)
+  MenuStart menu_start;
   RunOptions run;
 };
 
@@ -28,7 +30,7 @@ struct Options {
 static void usage() {
   fprintf(stderr, "usage: pxbenchy " VALIDATION_USAGE "[--vulkan auto|1.1|1.3] [--frames N] [--frames-warmup N] "
                   "[--time-limit S] [--no-hud] [--offscreen] [--json] [--screenshot file.png] [--screenshot-frame N] "
-                  "[--vulkan-info] [<script>]\n"
+                  "[--vulkan-info] [--run-all] [--save] [<script>]\n"
                   "  no script: menu (the options set its initial state)\n");
 }
 
@@ -76,6 +78,7 @@ static bool parse_args(const std::vector<std::string>& args, Options* opt) {
       if (!parse_count(a, i + 1 < args.size() ? args[++i] : "", &opt->run.frames_warmup)) { return false; }
     } else if (a == "--time-limit") {
       if (!parse_count(a, i + 1 < args.size() ? args[++i] : "", &opt->run.time_limit)) { return false; }
+      opt->time_limit = true;
     } else if (a == "--no-hud") {
       opt->run.hud = false;
     } else if (a == "--offscreen") {
@@ -84,6 +87,10 @@ static bool parse_args(const std::vector<std::string>& args, Options* opt) {
       opt->json = true;
     } else if (a == "--vulkan-info") {
       opt->vulkan_info = true;
+    } else if (a == "--run-all") {
+      opt->menu_start.run_all = true;
+    } else if (a == "--save") {
+      opt->menu_start.save = true;
     } else if (a == "--screenshot") {
       if (i + 1 >= args.size()) {
         fprintf(stderr, "error: --screenshot needs a file path\n");
@@ -110,6 +117,15 @@ static bool parse_args(const std::vector<std::string>& args, Options* opt) {
     fprintf(stderr, "error: --json and --screenshot need a script\n");
     return false;
   }
+  if (!opt->menu && opt->menu_start.run_all) {
+    fprintf(stderr, "error: --run-all runs every script: no script argument\n");
+    return false;
+  }
+  if (opt->menu && opt->menu_start.save && !opt->menu_start.run_all) {
+    fprintf(stderr, "error: --save needs a script or --run-all\n");
+    return false;
+  }
+  if (opt->time_limit) { opt->menu_start.time_limit = opt->run.time_limit; }
   if (opt->run.screenshot_frame != 1 && opt->run.screenshot.empty()) {
     fprintf(stderr, "error: --screenshot-frame needs --screenshot\n");
     return false;
@@ -143,13 +159,22 @@ int app_main(const std::vector<std::string>& args) {
   if (!session_init(&s, opt.vulkan, opt.validation)) { return 1; }
   int rc;
   if (opt.menu) {
-    rc = menu_run(&s, ro);
+    rc = menu_run(&s, ro, opt.menu_start);
   } else {
     RunResult r = run_script(&s, ro);
     const std::string& report = opt.json ? r.json : r.text;
     fwrite(report.data(), 1, report.size(), stdout);
     fflush(stdout);
     rc = r.ok ? 0 : 1;
+    if (opt.menu_start.save && !r.json.empty()) { // no report (the run could not start): nothing to save
+      std::string where, name;
+      if (results_save(&s, {r.json}, &where, &name)) {
+        printf("results: %s\n", where.c_str());
+        fflush(stdout);
+      } else {
+        rc = 1; // results_save printed
+      }
+    }
   }
   session_shutdown(&s);
   return rc;
